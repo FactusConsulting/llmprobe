@@ -108,6 +108,45 @@ for ep in vllm:8000 llamacpp:8081; do
 done
 ```
 
+## Authentication
+
+For hosted endpoints (OpenAI, Anthropic via gateway, OpenRouter, vLLM with `--api-key`),
+provide a bearer token via flag or environment variable. The flag wins if both are set:
+
+```sh
+# Flag-based (overrides env)
+llmprobe ping https://api.openai.com --api-key sk-proj-...
+llmprobe test https://api.openai.com -m gpt-5 -p "Hej" --api-key sk-proj-...
+
+# Environment variable (preferred for scripts and CI — keeps secrets out of shell history)
+export OPENAI_API_KEY=sk-proj-...
+llmprobe models https://api.openai.com
+llmprobe test https://api.openai.com -m gpt-5 -p "Hej"
+
+# Per-call without leaving in env or history
+OPENAI_API_KEY=sk-proj-... llmprobe ping https://api.openai.com
+```
+
+Despite the env var name `OPENAI_API_KEY`, it's used as a generic bearer token — works
+with any OpenAI-compatible endpoint:
+
+```sh
+# OpenRouter (one key, many models)
+OPENAI_API_KEY=sk-or-v1-... llmprobe test https://openrouter.ai/api -m anthropic/claude-sonnet-4-6 -p "Hej"
+
+# vLLM secured with --api-key
+OPENAI_API_KEY=my-vllm-token llmprobe stream http://infer:8000 -m gemma4-26b -p "Test"
+
+# Anthropic via OpenAI-compatible gateway
+OPENAI_API_KEY=sk-ant-... llmprobe test https://gateway.example.com -m claude-sonnet-4-6 -p "Hej"
+
+# Local llama.cpp / Ollama (no auth needed)
+llmprobe models http://localhost:11434
+```
+
+If you forget the key on a hosted endpoint, `llmprobe` reports the 401/403 response
+verbatim in the `error` field so you can tell auth failures from network failures.
+
 ## JSON schema
 
 All `--json` output uses stable snake_case field names. Examples:

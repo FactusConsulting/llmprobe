@@ -139,6 +139,15 @@ public sealed class HelpAiCommand : Command
               All commands are read-mostly (single requests, --max-tokens defaults to 16).
               No state mutation. Safe to run repeatedly.
 
+            AUTHENTICATION
+              For hosted endpoints (OpenAI, Anthropic, OpenRouter, secured vLLM):
+                - Pass --api-key <token> on the command line, OR
+                - Set OPENAI_API_KEY in the environment (the env var name is generic;
+                  it's just used as a bearer token for any OpenAI-compatible endpoint)
+              The --api-key flag wins if both are present. Local llama.cpp/Ollama
+              instances typically need no key. A missing key on a hosted endpoint
+              shows up as 401/403 in the result.error field, not exit code 78.
+
             PREFERRED PATTERNS
               - Always pass --json when piping to jq or storing output
               - Use 'ping' before any other command if endpoint reachability is unknown
