@@ -43,14 +43,14 @@ jobs:
       - name: Restore
         run: dotnet restore ${{ env.PROJECT_PATH }} -r ${{ matrix.target }}
 
-      - name: Publish (single-file, self-contained, trimmed)
+      - name: Publish (single-file, self-contained)
         run: |
           dotnet publish ${{ env.PROJECT_PATH }} \
             -c Release \
             -r ${{ matrix.target }} \
             --self-contained \
             -p:PublishSingleFile=true \
-            -p:PublishTrimmed=true \
+
             -p:DebugType=none \
             -p:DebugSymbols=false \
             -o publish/${{ matrix.target }}
