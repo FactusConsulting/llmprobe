@@ -79,6 +79,10 @@ public static class Render
         t.AddRow("models", r.AvailableModels.Length.ToString());
         AnsiConsole.Write(t);
         foreach (var m in r.AvailableModels) AnsiConsole.MarkupLine($"  [green]•[/] {m}");
+        if (r.AuthNote != null)
+        {
+            AnsiConsole.MarkupLine($"[yellow]note:[/] {Markup.Escape(r.AuthNote)}");
+        }
     }
 
     public static void Error(string error, string? hint = null)

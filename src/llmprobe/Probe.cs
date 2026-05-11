@@ -179,11 +179,25 @@ public static class Probe
         var jsonMode = await TryFeatureAsync(http, e, firstModel, """{"response_format":{"type":"json_object"}}""", ct);
         var logprobs = await TryFeatureAsync(http, e, firstModel, """{"logprobs":true}""", ct);
 
-        return new CapabilitiesResult(e, streaming, false, false, jsonMode, logprobs, api, server,
-            models?.Models ?? Array.Empty<string>());
+        // If all features look "false" because completions endpoint is auth-gated,
+        // surface that more honestly via the auth_required field.
+        var authRequired = streaming == FeatureState.AuthRequired
+                        || jsonMode == FeatureState.AuthRequired
+                        || logprobs == FeatureState.AuthRequired;
+
+        return new CapabilitiesResult(e,
+            streaming == FeatureState.Yes,
+            false, false,
+            jsonMode == FeatureState.Yes,
+            logprobs == FeatureState.Yes,
+            api, server,
+            models?.Models ?? Array.Empty<string>(),
+            authRequired ? "auth-required (some feature probes returned 401/403; set --api-key or OPENAI_API_KEY to detect properly)" : null);
     }
 
-    private static async Task<bool> TryFeatureAsync(
+    public enum FeatureState { Yes, No, AuthRequired }
+
+    private static async Task<FeatureState> TryFeatureAsync(
         HttpClient http, string endpoint, string model, string extraJson, CancellationToken ct, bool expectSse = false)
     {
         try
@@ -194,14 +208,17 @@ public static class Probe
             var req = new HttpRequestMessage(HttpMethod.Post, $"{endpoint}/v1/chat/completions")
             { Content = new StringContent(body, Encoding.UTF8, "application/json") };
             using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-            if (!res.IsSuccessStatusCode) return false;
-            if (!expectSse) return true;
+            if (res.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                || res.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                return FeatureState.AuthRequired;
+            if (!res.IsSuccessStatusCode) return FeatureState.No;
+            if (!expectSse) return FeatureState.Yes;
             await using var s = await res.Content.ReadAsStreamAsync(ct);
             using var r = new StreamReader(s);
             var line = await r.ReadLineAsync(ct);
-            return line != null && line.StartsWith("data:");
+            return line != null && line.StartsWith("data:") ? FeatureState.Yes : FeatureState.No;
         }
-        catch { return false; }
+        catch { return FeatureState.No; }
     }
 
     private static int ApproxTokens(string text) => Math.Max(1, text.Length / 4);

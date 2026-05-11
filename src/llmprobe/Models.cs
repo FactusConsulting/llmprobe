@@ -66,7 +66,8 @@ public record CapabilitiesResult(
     bool LogProbs,
     string? ApiCompatibility,
     string? ServerSoftware,
-    string[] AvailableModels);
+    string[] AvailableModels,
+    string? AuthNote = null);
 
 public record ErrorResult(string Error, string? Hint);
 
