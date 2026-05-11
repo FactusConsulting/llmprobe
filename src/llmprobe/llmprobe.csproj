@@ -18,4 +18,7 @@
     <PackageReference Include="Spectre.Console.Cli" Version="0.50.0" />
     <PackageReference Include="Spectre.Console.Json" Version="0.50.0" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="llmprobe.Tests" />
+  </ItemGroup>
 </Project>

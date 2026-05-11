@@ -41,6 +41,11 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Test (unit only, skip integration)
+        if: matrix.target == 'linux-x64' || matrix.target == 'win-x64'
+        run: dotnet test tests/${{ env.APP_NAME }}.Tests/${{ env.APP_NAME }}.Tests.csproj -c Release --filter "Category!=Integration" --logger "console;verbosity=normal"
+        shell: bash
+
       - name: Restore
         run: dotnet restore ${{ env.PROJECT_PATH }} -r ${{ matrix.target }}
 
