@@ -41,6 +41,18 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Derive version (tag drives version, otherwise dev+sha)
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            v="${GITHUB_REF#refs/tags/v}"
+          else
+            v="0.0.0-dev.$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Building with version: $v"
+
       - name: Test (unit only, skip integration)
         if: matrix.target == 'linux-x64' || matrix.target == 'win-x64'
         run: dotnet test tests/${{ env.APP_NAME }}.Tests/${{ env.APP_NAME }}.Tests.csproj -c Release --filter "Category!=Integration" --logger "console;verbosity=normal"
@@ -55,6 +67,8 @@ jobs:
             -c Release \
             -r ${{ matrix.target }} \
             --self-contained \
+            -p:Version=${{ steps.ver.outputs.version }} \
+            -p:InformationalVersion=${{ steps.ver.outputs.version }} \
             -p:PublishSingleFile=true \
             -p:DebugType=none \
             -p:DebugSymbols=false \

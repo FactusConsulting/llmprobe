@@ -1,11 +1,16 @@
+using System.Reflection;
 using LlmProbe;
 using Spectre.Console.Cli;
+
+var version = Assembly.GetExecutingAssembly()
+    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+    ?.InformationalVersion ?? "0.0.0-dev";
 
 var app = new CommandApp();
 app.Configure(config =>
 {
     config.SetApplicationName("llmprobe");
-    config.SetApplicationVersion("0.1.0");
+    config.SetApplicationVersion(version);
     config.AddCommand<PingCommand>("ping")
         .WithDescription("Reachability and latency check (no model invocation).")
         .WithExample("ping", "http://localhost:11434")
