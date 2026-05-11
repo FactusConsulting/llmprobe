@@ -123,11 +123,9 @@ public sealed class CapabilitiesCommand : AsyncCommand<EndpointSettings>
     }
 }
 
-public sealed class HelpAiCommand : Command
+public static class AgentGuidance
 {
-    public override int Execute(CommandContext ctx)
-    {
-        Console.WriteLine("""
+    public const string Text = """
             llmprobe — guidance for AI agents
 
             WHEN TO USE
@@ -177,7 +175,14 @@ public sealed class HelpAiCommand : Command
             COMPOSE WITH OTHER TOOLS
               llmprobe is a CLI. It pipes. It exits with meaningful codes. It writes
               stable JSON. Use it like grep — small, composable, predictable.
-            """);
+            """;
+}
+
+public sealed class HelpAiCommand : Command
+{
+    public override int Execute(CommandContext ctx)
+    {
+        Console.WriteLine(AgentGuidance.Text);
         return 0;
     }
 }

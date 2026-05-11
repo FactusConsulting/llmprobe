@@ -2,6 +2,16 @@ using System.Reflection;
 using LlmProbe;
 using Spectre.Console.Cli;
 
+// Honor --help-ai as a global flag before Spectre.Console.Cli routing. This
+// matches the convention preached in the ai-ops.dk blog post about agent-
+// friendly CLI design. The subcommand 'help-ai' remains as an alias for
+// discoverability in --help output.
+if (args.Any(a => a == "--help-ai"))
+{
+    Console.WriteLine(AgentGuidance.Text);
+    return 0;
+}
+
 var version = Assembly.GetExecutingAssembly()
     .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
     ?.InformationalVersion ?? "0.0.0-dev";
