@@ -15,7 +15,7 @@ public static class Render
         if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.PingResult)); return; }
         if (Quiet) { Console.WriteLine(r.Reachable ? "ok" : "fail"); return; }
         var status = r.Reachable ? "[green]✓[/]" : "[red]✗[/]";
-        AnsiConsole.MarkupLineInterpolated($"{status} [bold]{r.Endpoint}[/]");
+        AnsiConsole.MarkupLine($"{status} [bold]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
         t.AddRow("status", r.StatusCode?.ToString() ?? "—");
         t.AddRow("latency", $"{r.LatencyMs} ms");
@@ -28,8 +28,8 @@ public static class Render
     {
         if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.ModelList)); return; }
         if (Quiet) { foreach (var m in r.Models) Console.WriteLine(m); return; }
-        AnsiConsole.MarkupLineInterpolated($"[bold]{r.Count}[/] model(s) available on [cyan]{r.Endpoint}[/] [grey]({r.LatencyMs} ms)[/]");
-        foreach (var m in r.Models) AnsiConsole.MarkupLineInterpolated($"  [green]•[/] {m}");
+        AnsiConsole.MarkupLine($"[bold]{r.Count}[/] model(s) available on [cyan]{r.Endpoint}[/] [grey]({r.LatencyMs} ms)[/]");
+        foreach (var m in r.Models) AnsiConsole.MarkupLine($"  [green]•[/] {m}");
     }
 
     public static void Test(TestResult r)
@@ -37,7 +37,7 @@ public static class Render
         if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.TestResult)); return; }
         if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
         var status = r.Ok ? "[green]✓[/]" : "[red]✗[/]";
-        AnsiConsole.MarkupLineInterpolated($"{status} [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        AnsiConsole.MarkupLine($"{status} [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
         t.AddRow("latency", $"{r.LatencyMs} ms");
         t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
@@ -52,7 +52,7 @@ public static class Render
         if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.StreamResult)); return; }
         if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
         var status = r.Ok ? "[green]✓[/]" : "[red]✗[/]";
-        AnsiConsole.MarkupLineInterpolated($"{status} streaming [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        AnsiConsole.MarkupLine($"{status} streaming [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
         t.AddRow("TTFT", $"[yellow]{r.TtftMs}[/] ms");
         t.AddRow("total", $"{r.TotalMs} ms");
@@ -67,7 +67,7 @@ public static class Render
     public static void Capabilities(CapabilitiesResult r)
     {
         if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.CapabilitiesResult)); return; }
-        AnsiConsole.MarkupLineInterpolated($"Capabilities of [cyan]{r.Endpoint}[/]");
+        AnsiConsole.MarkupLine($"Capabilities of [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("feature").AddColumn("supported");
         if (r.ServerSoftware != null) t.AddRow("server", Markup.Escape(r.ServerSoftware));
         if (r.ApiCompatibility != null) t.AddRow("api", Markup.Escape(r.ApiCompatibility));
@@ -78,7 +78,7 @@ public static class Render
         t.AddRow("logprobs", Yn(r.LogProbs));
         t.AddRow("models", r.AvailableModels.Length.ToString());
         AnsiConsole.Write(t);
-        foreach (var m in r.AvailableModels) AnsiConsole.MarkupLineInterpolated($"  [green]•[/] {m}");
+        foreach (var m in r.AvailableModels) AnsiConsole.MarkupLine($"  [green]•[/] {m}");
     }
 
     public static void Error(string error, string? hint = null)
@@ -88,8 +88,8 @@ public static class Render
             Console.Error.WriteLine(JsonSerializer.Serialize(new ErrorResult(error, hint), JsonContext.Default.ErrorResult));
             return;
         }
-        AnsiConsole.MarkupLineInterpolated($"[red]error:[/] {error}");
-        if (hint != null) AnsiConsole.MarkupLineInterpolated($"[grey]hint:[/]  {hint}");
+        AnsiConsole.MarkupLine($"[red]error:[/] {error}");
+        if (hint != null) AnsiConsole.MarkupLine($"[grey]hint:[/]  {hint}");
     }
 
     private static void Json(string s) => Console.WriteLine(s);
