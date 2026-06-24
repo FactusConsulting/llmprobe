@@ -255,12 +255,12 @@ public static class AgentGuidance
               and stable across versions. Errors go to stderr as {"error","hint"}.
 
             EXAMPLE FLOWS
-              llmprobe ping http://infer:8000 --json | jq .reachable
-              llmprobe models http://infer:8000 --json | jq -r '.models[]'
-              cat prompt.md | llmprobe stream http://infer:8000 -m gemma4-26b -p @- --json
+              llmprobe ping https://infer:8000 --json | jq .reachable
+              llmprobe models https://infer:8000 --json | jq -r '.models[]'
+              cat prompt.md | llmprobe stream https://infer:8000 -m gemma4-26b -p @- --json
               llmprobe capabilities https://api.openai.com --json | jq .streaming
-              llmprobe embed http://infer:8000 -m <embedding-model> -i "hello" --json | jq .dimensions
-              llmprobe rerank http://infer:8000 -q "@q.txt" -d @docs.txt --json | jq '.ranking[0]'
+              llmprobe embed https://infer:8000 -m <embedding-model> -i "hello" --json | jq .dimensions
+              llmprobe rerank https://infer:8000 -q "@q.txt" -d @docs.txt --json | jq '.ranking[0]'
 
             COMPOSE WITH OTHER TOOLS
               llmprobe is a CLI. It pipes. It exits with meaningful codes. It writes

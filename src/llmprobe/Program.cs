@@ -27,28 +27,28 @@ app.Configure(config =>
         .WithExample("ping", "https://api.openai.com", "--json");
     config.AddCommand<ModelsCommand>("models")
         .WithDescription("List available models from /v1/models.")
-        .WithExample("models", "http://infer:8000")
-        .WithExample("models", "http://infer:8000", "--json");
+        .WithExample("models", "https://infer:8000")
+        .WithExample("models", "https://infer:8000", "--json");
     config.AddCommand<TestCommand>("test")
         .WithDescription("Send a single chat completion; report tokens, latency, finish reason.")
-        .WithExample("test", "http://infer:8000", "-m", "gemma4-26b", "-p", "Hej")
-        .WithExample("test", "http://infer:8000", "-p", "@prompt.md", "--json");
+        .WithExample("test", "https://infer:8000", "-m", "gemma4-26b", "-p", "Hej")
+        .WithExample("test", "https://infer:8000", "-p", "@prompt.md", "--json");
     config.AddCommand<StreamCommand>("stream")
         .WithDescription("Stream a chat completion; measure TTFT and tokens/sec.")
-        .WithExample("stream", "http://infer:8000", "-m", "gemma4-26b")
-        .WithExample("stream", "http://infer:8000", "-p", "@-", "--json");
+        .WithExample("stream", "https://infer:8000", "-m", "gemma4-26b")
+        .WithExample("stream", "https://infer:8000", "-p", "@-", "--json");
     config.AddCommand<EmbedCommand>("embed")
         .WithDescription("Request an embedding from /v1/embeddings; report dimensions, vector norm, latency.")
-        .WithExample("embed", "http://infer:8000", "-m", "<embedding-model>", "-i", "hello world")
-        .WithExample("embed", "http://infer:8000", "-i", "@doc.txt", "--json");
+        .WithExample("embed", "https://infer:8000", "-m", "<embedding-model>", "-i", "hello world")
+        .WithExample("embed", "https://infer:8000", "-i", "@doc.txt", "--json");
     config.AddCommand<RerankCommand>("rerank")
         .WithDescription("Rank documents against a query via /v1/rerank; report ordering and scores.")
-        .WithExample("rerank", "http://infer:8000", "-m", "<reranker-model>", "-q", "what is the capital?", "-d", "Copenhagen is the capital", "-d", "a cat is sleeping")
-        .WithExample("rerank", "http://infer:8000", "-q", "@query.txt", "-d", "@docs.txt", "--json");
+        .WithExample("rerank", "https://infer:8000", "-m", "<reranker-model>", "-q", "what is the capital?", "-d", "Copenhagen is the capital", "-d", "a cat is sleeping")
+        .WithExample("rerank", "https://infer:8000", "-q", "@query.txt", "-d", "@docs.txt", "--json");
     config.AddCommand<CapabilitiesCommand>("capabilities")
         .WithAlias("caps")
         .WithDescription("Detect features the endpoint supports (streaming, json mode, logprobs, ...).")
-        .WithExample("capabilities", "http://infer:8000");
+        .WithExample("capabilities", "https://infer:8000");
     config.AddCommand<HelpAiCommand>("help-ai")
         .WithDescription("Print guidance specifically for AI agents invoking this tool.");
 });
