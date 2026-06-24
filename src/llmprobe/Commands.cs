@@ -177,6 +177,16 @@ public sealed class RerankCommand : AsyncCommand<RerankSettings>
     public override async Task<int> ExecuteAsync(CommandContext context, RerankSettings s)
     {
         s.ApplyToRender();
+        // Spectre does not enforce the C# `required` modifier, so a missing -q
+        // leaves Query null. Validate (and resolve it before documents, so two
+        // @- values don't silently drain stdin into the query, leaving none for
+        // the docs) instead of letting ResolvedQuery() throw a raw NRE.
+        if (string.IsNullOrWhiteSpace(s.Query))
+        {
+            Render.Error("no query provided", "Pass a query with -q/--query, or -q @query.txt / -q @-");
+            return 78;
+        }
+        var query = s.ResolvedQuery();
         var docs = s.ResolvedDocuments();
         if (docs.Length == 0)
         {
@@ -184,7 +194,7 @@ public sealed class RerankCommand : AsyncCommand<RerankSettings>
             return 78;
         }
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.RerankAsync(http, s.Endpoint, s.Model, s.ResolvedQuery(), docs, s.TopN, default);
+        var r = await Probe.RerankAsync(http, s.Endpoint, s.Model, query, docs, s.TopN, default);
         Render.Rerank(r);
         return r.Ok ? 0 : 74;
     }
