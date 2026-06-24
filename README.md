@@ -23,7 +23,7 @@ llmprobe help-ai                               # guidance for AI agents using th
 
 Works against any OpenAI-compatible endpoint: **vLLM**, **llama.cpp** (`llama-server`), **Ollama**, **OpenAI**, **Anthropic** (via gateways), **OpenRouter**, **Mistral**, custom RAG-gateways.
 
-Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`capabilities` → `/v1/chat/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`. (For vLLM, embeddings/rerank typically need to target the model's own engine service — the production-stack router only proxies chat.)
+Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`capabilities` → `/v1/chat/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`. A model-aware gateway (e.g. the vLLM production-stack router) routes by the request's `model`, so pass the right `-m` to reach the intended backend. A freshly deployed model may not be routable until discovery catches up — target its engine service directly if you need it immediately.
 
 ## Why this exists (the agent angle)
 

@@ -222,8 +222,10 @@ public static class AgentGuidance
               test/stream/caps -> /v1/chat/completions
               embed            -> /v1/embeddings   (reports dimensions + L2 norm)
               rerank           -> /v1/rerank       (reports ordering + relevance scores)
-              For vLLM, embeddings/rerank usually must hit the model's own engine
-              service directly — the production-stack router only proxies chat.
+              A model-aware gateway (e.g. the vLLM production-stack router) routes
+              by the request's model name, so pass -m to reach the right backend.
+              A just-deployed model may not be routable until discovery catches up;
+              hit its engine service directly if you need it immediately.
 
             AUTHENTICATION
               For hosted endpoints (OpenAI, Anthropic, OpenRouter, secured vLLM):
