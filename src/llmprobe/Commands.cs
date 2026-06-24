@@ -113,7 +113,7 @@ public sealed class RerankSettings : EndpointSettings
 
 public sealed class PingCommand : AsyncCommand<EndpointSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext ctx, EndpointSettings s)
+    public override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s)
     {
         s.ApplyToRender();
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
@@ -125,7 +125,7 @@ public sealed class PingCommand : AsyncCommand<EndpointSettings>
 
 public sealed class ModelsCommand : AsyncCommand<EndpointSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext ctx, EndpointSettings s)
+    public override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s)
     {
         s.ApplyToRender();
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
@@ -138,7 +138,7 @@ public sealed class ModelsCommand : AsyncCommand<EndpointSettings>
 
 public sealed class TestCommand : AsyncCommand<ChatSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext ctx, ChatSettings s)
+    public override async Task<int> ExecuteAsync(CommandContext context, ChatSettings s)
     {
         s.ApplyToRender();
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
@@ -150,7 +150,7 @@ public sealed class TestCommand : AsyncCommand<ChatSettings>
 
 public sealed class StreamCommand : AsyncCommand<ChatSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext ctx, ChatSettings s)
+    public override async Task<int> ExecuteAsync(CommandContext context, ChatSettings s)
     {
         s.ApplyToRender();
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
@@ -162,7 +162,7 @@ public sealed class StreamCommand : AsyncCommand<ChatSettings>
 
 public sealed class EmbedCommand : AsyncCommand<EmbedSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext ctx, EmbedSettings s)
+    public override async Task<int> ExecuteAsync(CommandContext context, EmbedSettings s)
     {
         s.ApplyToRender();
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
@@ -174,7 +174,7 @@ public sealed class EmbedCommand : AsyncCommand<EmbedSettings>
 
 public sealed class RerankCommand : AsyncCommand<RerankSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext ctx, RerankSettings s)
+    public override async Task<int> ExecuteAsync(CommandContext context, RerankSettings s)
     {
         s.ApplyToRender();
         var docs = s.ResolvedDocuments();
@@ -192,7 +192,7 @@ public sealed class RerankCommand : AsyncCommand<RerankSettings>
 
 public sealed class CapabilitiesCommand : AsyncCommand<EndpointSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext ctx, EndpointSettings s)
+    public override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s)
     {
         s.ApplyToRender();
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
