@@ -221,6 +221,107 @@ public static class Probe
         catch { return FeatureState.No; }
     }
 
+    public static async Task<EmbedResult> EmbedAsync(
+        HttpClient http, string endpoint, string model, string[] input, CancellationToken ct)
+    {
+        var e = Normalize(endpoint);
+        var sw = Stopwatch.StartNew();
+        var body = new OpenAiEmbeddingRequest(model, input);
+        var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiEmbeddingRequest);
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/embeddings")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        try
+        {
+            using var res = await http.SendAsync(req, ct);
+            sw.Stop();
+            var raw = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                return new EmbedResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds, input.Length, 0, 0, 0, 0, Trunc(raw, 200));
+            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiEmbeddingResponse);
+            var first = resp?.Data.FirstOrDefault();
+            var vec = first?.Embedding ?? Array.Empty<float>();
+            return new EmbedResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                input.Length,
+                vec.Length,
+                L2Norm(vec),
+                resp?.Usage?.PromptTokens ?? 0,
+                resp?.Usage?.TotalTokens ?? 0,
+                null);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new EmbedResult(e, model, false, null, sw.ElapsedMilliseconds, input.Length, 0, 0, 0, 0, ex.Message);
+        }
+    }
+
+    public static async Task<RerankResult> RerankAsync(
+        HttpClient http, string endpoint, string model, string query, string[] documents, int? topN, CancellationToken ct)
+    {
+        var e = Normalize(endpoint);
+        var sw = Stopwatch.StartNew();
+        var body = new OpenAiRerankRequest(model, query, documents, topN);
+        var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiRerankRequest);
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/rerank")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        try
+        {
+            using var res = await http.SendAsync(req, ct);
+            sw.Stop();
+            var raw = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                return new RerankResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds, documents.Length, Array.Empty<RerankItem>(), 0, Trunc(raw, 200));
+            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiRerankResponse);
+            var ranking = (resp?.Results ?? Array.Empty<OpenAiRerankResultEntry>())
+                .Select(r => new RerankItem(
+                    r.Index,
+                    r.RelevanceScore,
+                    // Prefer the doc text echoed by the server; fall back to the input we sent.
+                    Trunc(r.Document?.Text ?? (r.Index >= 0 && r.Index < documents.Length ? documents[r.Index] : ""), 80)))
+                .ToArray();
+            return new RerankResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                documents.Length, ranking, resp?.Usage?.TotalTokens ?? 0, null);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new RerankResult(e, model, false, null, sw.ElapsedMilliseconds, documents.Length, Array.Empty<RerankItem>(), 0, ex.Message);
+        }
+    }
+
+    // Expand document/input values: a value of "@-" reads stdin, "@file" reads a
+    // file; in both cases each non-empty line becomes a separate entry. Any other
+    // value is taken literally. Used by the rerank command so a corpus can be fed
+    // as `-d @docs.txt` instead of one -d flag per line.
+    public static string[] ExpandLines(IEnumerable<string> values)
+    {
+        var outp = new List<string>();
+        foreach (var v in values)
+        {
+            if (v == "@-")
+                outp.AddRange(SplitLines(Console.In.ReadToEnd()));
+            else if (v.StartsWith('@'))
+                outp.AddRange(SplitLines(File.ReadAllText(v[1..])));
+            else
+                outp.Add(v);
+        }
+        return outp.ToArray();
+    }
+
+    internal static IEnumerable<string> SplitLines(string text) =>
+        text.Replace("\r\n", "\n").Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0);
+
+    internal static double L2Norm(float[] v)
+    {
+        double sum = 0;
+        foreach (var x in v) sum += (double)x * x;
+        return Math.Sqrt(sum);
+    }
+
     private static int ApproxTokens(string text) => Math.Max(1, text.Length / 4);
     private static string Trunc(string s, int n) => s.Length > n ? s[..n] + "…" : s;
 }

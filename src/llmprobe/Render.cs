@@ -10,17 +10,21 @@ public static class Render
     public static OutputFormat Format { get; set; } = OutputFormat.Text;
     public static bool Quiet { get; set; } = false;
 
+    private const string IconOk = "[green]✓[/]";
+    private const string IconFail = "[red]✗[/]";
+    private const string ErrorLabel = "[red]error[/]";
+
     public static void Ping(PingResult r)
     {
         if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.PingResult)); return; }
         if (Quiet) { Console.WriteLine(r.Reachable ? "ok" : "fail"); return; }
-        var status = r.Reachable ? "[green]✓[/]" : "[red]✗[/]";
+        var status = r.Reachable ? IconOk : IconFail;
         AnsiConsole.MarkupLine($"{status} [bold]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
         t.AddRow("status", r.StatusCode?.ToString() ?? "—");
         t.AddRow("latency", $"{r.LatencyMs} ms");
         if (r.ServerHeader != null) t.AddRow("server", Markup.Escape(r.ServerHeader));
-        if (r.Error != null) t.AddRow("[red]error[/]", Markup.Escape(r.Error));
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
     }
 
@@ -36,14 +40,14 @@ public static class Render
     {
         if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.TestResult)); return; }
         if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
-        var status = r.Ok ? "[green]✓[/]" : "[red]✗[/]";
+        var status = r.Ok ? IconOk : IconFail;
         AnsiConsole.MarkupLine($"{status} [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
         t.AddRow("latency", $"{r.LatencyMs} ms");
         t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
         if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
         if (r.ResponsePreview != null) t.AddRow("response", $"[italic]{Markup.Escape(r.ResponsePreview)}[/]");
-        if (r.Error != null) t.AddRow("[red]error[/]", Markup.Escape(r.Error));
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
     }
 
@@ -51,7 +55,7 @@ public static class Render
     {
         if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.StreamResult)); return; }
         if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
-        var status = r.Ok ? "[green]✓[/]" : "[red]✗[/]";
+        var status = r.Ok ? IconOk : IconFail;
         AnsiConsole.MarkupLine($"{status} streaming [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
         t.AddRow("TTFT", $"[yellow]{r.TtftMs}[/] ms");
@@ -60,7 +64,7 @@ public static class Render
         t.AddRow("tokens", $"~{r.OutputTokensApprox}");
         t.AddRow("throughput", $"[yellow]{r.TokensPerSec:F1}[/] tok/s");
         if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
-        if (r.Error != null) t.AddRow("[red]error[/]", Markup.Escape(r.Error));
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
     }
 
@@ -83,6 +87,40 @@ public static class Render
         {
             AnsiConsole.MarkupLine($"[yellow]note:[/] {Markup.Escape(r.AuthNote)}");
         }
+    }
+
+    public static void Embed(EmbedResult r)
+    {
+        if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.EmbedResult)); return; }
+        if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} embed [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
+        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow("inputs", r.Inputs.ToString());
+        t.AddRow("dimensions", $"[yellow]{r.Dimensions}[/]");
+        t.AddRow("norm", $"{r.Norm:F4}");
+        if (r.TotalTokens > 0) t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+    }
+
+    public static void Rerank(RerankResult r)
+    {
+        if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.RerankResult)); return; }
+        if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} rerank [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/] [grey]({r.LatencyMs} ms, {r.Documents} docs)[/]");
+        if (r.Error != null) { AnsiConsole.MarkupLine($"[red]error:[/] {Markup.Escape(r.Error)}"); return; }
+        var t = new Table().Border(TableBorder.Minimal).AddColumn("rank").AddColumn("idx").AddColumn("score").AddColumn("document");
+        var rank = 1;
+        foreach (var item in r.Ranking)
+        {
+            t.AddRow(rank.ToString(), item.Index.ToString(), $"[yellow]{item.Score:F4}[/]",
+                item.DocumentPreview != null ? $"[italic]{Markup.Escape(item.DocumentPreview)}[/]" : "—");
+            rank++;
+        }
+        AnsiConsole.Write(t);
     }
 
     public static void Error(string error, string? hint = null)
