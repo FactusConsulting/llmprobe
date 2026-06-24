@@ -111,6 +111,82 @@ public sealed class RerankSettings : EndpointSettings
     public string[] ResolvedDocuments() => Probe.ExpandLines(Documents);
 }
 
+public sealed class ReasoningSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("default")]
+    [Description("Reasoning/thinking model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "default";
+
+    [CommandOption("-p|--prompt <PROMPT>")]
+    [DefaultValue("A farmer has 17 sheep. All but 9 run away. How many are left? Think step by step, then give the final number.")]
+    [Description("Reasoning prompt. Use @file.txt to read from file, or @- for stdin.")]
+    public string Prompt { get; init; } = "A farmer has 17 sheep. All but 9 run away. How many are left? Think step by step, then give the final number.";
+
+    [CommandOption("--max-tokens <N>")]
+    [DefaultValue(512)]
+    [Description("Maximum completion tokens (high enough to allow a thinking phase).")]
+    public int MaxTokens { get; init; } = 512;
+
+    public string ResolvedPrompt()
+    {
+        if (Prompt == "@-") return Console.In.ReadToEnd().Trim();
+        if (Prompt.StartsWith('@')) return File.ReadAllText(Prompt[1..]).Trim();
+        return Prompt;
+    }
+}
+
+public sealed class StructuredSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("default")]
+    [Description("Model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "default";
+
+    [CommandOption("-p|--prompt <PROMPT>")]
+    [DefaultValue("Extract a person from: 'Alice is 30 years old.' Respond only with the JSON object.")]
+    [Description("Prompt that should populate the {name, age} schema. Use @file.txt or @- for stdin.")]
+    public string Prompt { get; init; } = "Extract a person from: 'Alice is 30 years old.' Respond only with the JSON object.";
+
+    [CommandOption("--max-tokens <N>")]
+    [DefaultValue(128)]
+    [Description("Maximum completion tokens.")]
+    public int MaxTokens { get; init; } = 128;
+
+    public string ResolvedPrompt()
+    {
+        if (Prompt == "@-") return Console.In.ReadToEnd().Trim();
+        if (Prompt.StartsWith('@')) return File.ReadAllText(Prompt[1..]).Trim();
+        return Prompt;
+    }
+}
+
+public sealed class ReasoningCommand : AsyncCommand<ReasoningSettings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext context, ReasoningSettings s)
+    {
+        s.ApplyToRender();
+        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+        var r = await Probe.ReasoningAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
+        Render.Reasoning(r);
+        return r.Ok ? 0 : 74;
+    }
+}
+
+public sealed class StructuredCommand : AsyncCommand<StructuredSettings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext context, StructuredSettings s)
+    {
+        s.ApplyToRender();
+        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+        var r = await Probe.StructuredAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
+        Render.Structured(r);
+        // A successful HTTP call that returns bad structure is still exit 0 — only
+        // transport/HTTP failure is 74. (Render distinguishes the two via fields.)
+        return r.Ok ? 0 : 74;
+    }
+}
+
 public sealed class VisionSettings : EndpointSettings
 {
     [CommandOption("-m|--model <MODEL>")]
@@ -303,7 +379,9 @@ public static class AgentGuidance
               what model(s) it serves, and measure latency/throughput before relying
               on it. Use for health checks, regression testing, and capability discovery.
               Covers chat (test/stream), embeddings (embed), rerankers (rerank),
-              vision/multimodal input (vision) and function/tool calling (tools).
+              vision/multimodal input (vision), function/tool calling (tools),
+              reasoning/thinking models (reasoning) and structured/json-schema
+              output (structured).
 
             SAFE BY DEFAULT
               All commands are read-mostly (single requests, --max-tokens defaults to 16).
@@ -313,6 +391,8 @@ public static class AgentGuidance
               ping/models      -> /v1/models (+ /health)
               test/stream/caps -> /v1/chat/completions
               vision/tools     -> /v1/chat/completions (image input / tool calling)
+              reasoning        -> /v1/chat/completions (detects thinking/reasoning)
+              structured       -> /v1/chat/completions (json_schema adherence)
               embed            -> /v1/embeddings   (reports dimensions + L2 norm)
               rerank           -> /v1/rerank       (reports ordering + relevance scores)
               A model-aware gateway routes by the request's model name, so pass -m
@@ -354,6 +434,10 @@ public static class AgentGuidance
               llmprobe capabilities https://api.openai.com --json | jq .streaming
               llmprobe embed https://infer:8000 -m <embedding-model> -i "hello" --json | jq .dimensions
               llmprobe rerank https://infer:8000 -q "@q.txt" -d @docs.txt --json | jq '.ranking[0]'
+              llmprobe vision https://infer:8000 -i ./cat.png --json | jq .image_accepted
+              llmprobe tools https://infer:8000 --json | jq .tool_called
+              llmprobe reasoning https://infer:8000 --json | jq '{ok:.reasoning_detected,via:.reasoning_channel}'
+              llmprobe structured https://infer:8000 --json | jq .schema_conformant
 
             COMPOSE WITH OTHER TOOLS
               llmprobe is a CLI. It pipes. It exits with meaningful codes. It writes

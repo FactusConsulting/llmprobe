@@ -19,13 +19,15 @@ llmprobe embed http://infer:8000 -i "hello"    # embedding: dimensions + vector 
 llmprobe rerank http://infer:8000 -q "q" -d a -d b # rank documents against a query
 llmprobe vision http://infer:8000 -i ./cat.png # probe image (multimodal) input support
 llmprobe tools http://infer:8000               # probe function/tool calling support
+llmprobe reasoning http://infer:8000           # probe thinking/reasoning model behavior
+llmprobe structured http://infer:8000          # probe JSON-schema structured output
 llmprobe capabilities http://infer:8000        # detect features (streaming, JSON, vision)
 llmprobe help-ai                               # guidance for AI agents using this tool
 ```
 
 Works against any OpenAI-compatible endpoint: **vLLM**, **llama.cpp** (`llama-server`), **Ollama**, **OpenAI**, **Anthropic** (via gateways), **OpenRouter**, **Mistral**, custom RAG-gateways.
 
-Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`vision`/`tools`/`capabilities` → `/v1/chat/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`.
+Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`vision`/`tools`/`reasoning`/`structured`/`capabilities` → `/v1/chat/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`.
 
 ## Why this exists (the agent angle)
 
@@ -131,6 +133,48 @@ finish     tool_calls
 It sends a single `get_weather(location)` tool definition with `tool_choice: auto`
 and a prompt that should trigger it. If the model answers directly instead, `tool
 call` is `no` and the direct response is shown.
+
+### Probe a reasoning / thinking model
+
+```sh
+$ llmprobe reasoning http://infer:8000 -m deepseek-r1
+✓ reasoning deepseek-r1 @ http://infer:8000
+latency           1520 ms
+reasoning         detected
+channel           reasoning_content
+reasoning tokens  240
+split (chars)     thinking=980 answer=12
+tokens            prompt=30 completion=250 total=280
+finish            stop
+answer            9
+note:  TTFT split between thinking and answer needs streaming (use 'stream').
+```
+
+Sends a multi-step logic prompt and detects reasoning across the channels servers
+use: a `reasoning_content` field, an inline `<think>...</think>` block in the
+content, and/or `reasoning_tokens` under `usage.completion_tokens_details`. The
+`channel` field reports how it was detected. (Splitting time-to-first-token before
+vs. after the thinking phase requires streaming — use `stream` for that.)
+
+### Probe structured (JSON-schema) output
+
+```sh
+$ llmprobe structured http://infer:8000 -m gpt-4o
+✓ structured gpt-4o @ http://infer:8000
+latency         210 ms
+parsed json     yes
+schema conform  yes
+object          {"name":"Alice","age":30}
+tokens          prompt=20 completion=12 total=32
+finish          stop
+```
+
+Sends a request with `response_format: { type: "json_schema" }` for a fixed
+`{ name: string, age: integer }` schema, then validates that the response parses
+as JSON and conforms (required fields present, types match). A successful HTTP call
+that returns non-JSON or a schema mismatch still exits `0` — it reports
+`parsed json: no` / `schema conform: no` with the violations, distinguishing
+"endpoint doesn't support structured output" from a transport failure.
 
 ### Compose with shell
 

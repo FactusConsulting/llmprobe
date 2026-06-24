@@ -123,6 +123,45 @@ public static class Render
         AnsiConsole.Write(t);
     }
 
+    public static void Reasoning(ReasoningResult r)
+    {
+        if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.ReasoningResult)); return; }
+        if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} reasoning [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
+        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow("reasoning", r.ReasoningDetected ? "[green]detected[/]" : "[grey]not detected[/]");
+        if (r.ReasoningChannel != null) t.AddRow("channel", Markup.Escape(r.ReasoningChannel));
+        if (r.ReasoningTokens > 0) t.AddRow("reasoning tokens", $"[yellow]{r.ReasoningTokens}[/]");
+        if (r.ReasoningDetected) t.AddRow("split (chars)", $"thinking=[yellow]{r.ReasoningCharsApprox}[/] answer=[yellow]{r.AnswerCharsApprox}[/]");
+        t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
+        if (r.AnswerPreview != null) t.AddRow("answer", $"[italic]{Markup.Escape(r.AnswerPreview)}[/]");
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+        if (r.Note != null && r.Error == null) AnsiConsole.MarkupLine($"[grey]note:[/]  {Markup.Escape(r.Note)}");
+    }
+
+    public static void Structured(StructuredResult r)
+    {
+        if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.StructuredResult)); return; }
+        if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} structured [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
+        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow("parsed json", r.ParsedAsJson ? "[green]yes[/]" : "[red]no[/]");
+        t.AddRow("schema conform", r.SchemaConformant ? "[green]yes[/]" : "[red]no[/]");
+        if (r.SchemaViolations.Length > 0) t.AddRow("violations", Markup.Escape(string.Join("; ", r.SchemaViolations)));
+        if (r.ObjectPreview != null) t.AddRow("object", $"[italic]{Markup.Escape(r.ObjectPreview)}[/]");
+        t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+        if (r.Note != null && r.Error == null) AnsiConsole.MarkupLine($"[grey]note:[/]  {Markup.Escape(r.Note)}");
+    }
+
     public static void Vision(VisionResult r)
     {
         if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.VisionResult)); return; }

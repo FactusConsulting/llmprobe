@@ -28,6 +28,10 @@ namespace LlmProbe;
 [JsonSerializable(typeof(OpenAiVisionRequest))]
 [JsonSerializable(typeof(OpenAiToolsRequest))]
 [JsonSerializable(typeof(OpenAiToolsResponse))]
+[JsonSerializable(typeof(ReasoningResult))]
+[JsonSerializable(typeof(StructuredResult))]
+[JsonSerializable(typeof(OpenAiReasoningResponse))]
+[JsonSerializable(typeof(OpenAiStructuredRequest))]
 public partial class JsonContext : JsonSerializerContext { }
 
 public record PingResult(
@@ -281,3 +285,82 @@ public record OpenAiToolsChoice(
 public record OpenAiToolsResponse(
     [property: JsonPropertyName("choices")] OpenAiToolsChoice[] Choices,
     [property: JsonPropertyName("usage")] OpenAiUsage? Usage);
+
+public record ReasoningResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    int? StatusCode,
+    long LatencyMs,
+    bool ReasoningDetected,
+    string? ReasoningChannel,
+    int ReasoningTokens,
+    int ReasoningCharsApprox,
+    int AnswerCharsApprox,
+    string? FinishReason,
+    int PromptTokens,
+    int CompletionTokens,
+    int TotalTokens,
+    string? AnswerPreview,
+    string? Note,
+    string? Error);
+
+public record StructuredResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    int? StatusCode,
+    long LatencyMs,
+    bool ParsedAsJson,
+    bool SchemaConformant,
+    string[] SchemaViolations,
+    string? ObjectPreview,
+    string? FinishReason,
+    int PromptTokens,
+    int CompletionTokens,
+    int TotalTokens,
+    string? Note,
+    string? Error);
+
+// --- Reasoning response shapes ---
+// reasoning_content is exposed by some servers (e.g. vLLM, DeepSeek) on the
+// message; reasoning_tokens lives under usage.completion_tokens_details.
+public record OpenAiCompletionTokensDetails(
+    [property: JsonPropertyName("reasoning_tokens")] int? ReasoningTokens);
+
+public record OpenAiReasoningUsage(
+    [property: JsonPropertyName("prompt_tokens")] int PromptTokens,
+    [property: JsonPropertyName("completion_tokens")] int CompletionTokens,
+    [property: JsonPropertyName("total_tokens")] int TotalTokens,
+    [property: JsonPropertyName("completion_tokens_details")] OpenAiCompletionTokensDetails? CompletionTokensDetails);
+
+public record OpenAiReasoningMessage(
+    [property: JsonPropertyName("role")] string? Role,
+    [property: JsonPropertyName("content")] string? Content,
+    [property: JsonPropertyName("reasoning_content")] string? ReasoningContent);
+
+public record OpenAiReasoningChoice(
+    [property: JsonPropertyName("message")] OpenAiReasoningMessage? Message,
+    [property: JsonPropertyName("finish_reason")] string? FinishReason);
+
+public record OpenAiReasoningResponse(
+    [property: JsonPropertyName("choices")] OpenAiReasoningChoice[] Choices,
+    [property: JsonPropertyName("usage")] OpenAiReasoningUsage? Usage);
+
+// --- Structured output request shape ---
+// response_format: { "type": "json_schema", "json_schema": { name, schema, strict } }
+public record OpenAiJsonSchema(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("schema")] JsonElement Schema,
+    [property: JsonPropertyName("strict")] bool? Strict = null);
+
+public record OpenAiResponseFormat(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("json_schema")] OpenAiJsonSchema? JsonSchema = null);
+
+public record OpenAiStructuredRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("messages")] OpenAiMessage[] Messages,
+    [property: JsonPropertyName("response_format")] OpenAiResponseFormat ResponseFormat,
+    [property: JsonPropertyName("max_tokens")] int? MaxTokens = null,
+    [property: JsonPropertyName("temperature")] double? Temperature = null);

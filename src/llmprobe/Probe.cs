@@ -293,6 +293,166 @@ public static class Probe
         }
     }
 
+    public static async Task<ReasoningResult> ReasoningAsync(
+        HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
+    {
+        var e = Normalize(endpoint);
+        var sw = Stopwatch.StartNew();
+        var body = new OpenAiChatRequest(model,
+            new[] { new OpenAiMessage("user", prompt) }, MaxTokens: maxTokens, Temperature: 0);
+        var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiChatRequest);
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        try
+        {
+            using var res = await http.SendAsync(req, ct);
+            sw.Stop();
+            var raw = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                return new ReasoningResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                    false, null, 0, 0, 0, null, 0, 0, 0, null, null, Trunc(raw, 200));
+            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiReasoningResponse);
+            var choice = resp?.Choices.FirstOrDefault();
+            var content = choice?.Message?.Content ?? "";
+            var reasoningContent = choice?.Message?.ReasoningContent;
+            var reasoningTokens = resp?.Usage?.CompletionTokensDetails?.ReasoningTokens ?? 0;
+            var (detected, channel, reasoningText, answer) = DetectReasoning(content, reasoningContent, reasoningTokens);
+            return new ReasoningResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                detected, channel, reasoningTokens,
+                reasoningText.Length, answer.Length,
+                choice?.FinishReason,
+                resp?.Usage?.PromptTokens ?? 0,
+                resp?.Usage?.CompletionTokens ?? 0,
+                resp?.Usage?.TotalTokens ?? 0,
+                Trunc(answer.Trim(), 160),
+                "TTFT split between thinking and answer needs streaming (use 'stream').",
+                null);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new ReasoningResult(e, model, false, null, sw.ElapsedMilliseconds,
+                false, null, 0, 0, 0, null, 0, 0, 0, null, null, ex.Message);
+        }
+    }
+
+    // Detect reasoning across the channels servers use: a dedicated
+    // reasoning_content field, an inline <think>...</think> block in the content,
+    // and/or a reasoning_tokens count in usage. Returns (detected, channel,
+    // reasoningText, answerText) where answerText strips any <think> block.
+    internal static (bool Detected, string? Channel, string ReasoningText, string AnswerText)
+        DetectReasoning(string content, string? reasoningContent, int reasoningTokens)
+    {
+        if (!string.IsNullOrWhiteSpace(reasoningContent))
+            return (true, "reasoning_content", reasoningContent!, content);
+
+        var open = content.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
+        if (open >= 0)
+        {
+            var close = content.IndexOf("</think>", open, StringComparison.OrdinalIgnoreCase);
+            if (close >= 0)
+            {
+                var think = content.Substring(open + 7, close - (open + 7));
+                var answer = content[..open] + content[(close + 8)..];
+                return (true, "think_tag", think, answer);
+            }
+            // Unclosed <think>: treat the remainder as reasoning.
+            return (true, "think_tag", content[(open + 7)..], "");
+        }
+
+        if (reasoningTokens > 0)
+            return (true, "reasoning_tokens", "", content);
+
+        return (false, null, "", content);
+    }
+
+    public static async Task<StructuredResult> StructuredAsync(
+        HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
+    {
+        var e = Normalize(endpoint);
+        var sw = Stopwatch.StartNew();
+        var schema = JsonSerializer.Deserialize<JsonElement>("""
+            {"type":"object","properties":{"name":{"type":"string"},"age":{"type":"integer"}},"required":["name","age"],"additionalProperties":false}
+            """);
+        var responseFormat = new OpenAiResponseFormat("json_schema",
+            new OpenAiJsonSchema("person", schema, Strict: true));
+        var body = new OpenAiStructuredRequest(model,
+            new[] { new OpenAiMessage("user", prompt) }, responseFormat, MaxTokens: maxTokens, Temperature: 0);
+        var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiStructuredRequest);
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        try
+        {
+            using var res = await http.SendAsync(req, ct);
+            sw.Stop();
+            var raw = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                return new StructuredResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                    false, false, Array.Empty<string>(), null, null, 0, 0, 0,
+                    "endpoint rejected the request (may not support response_format json_schema)", Trunc(raw, 200));
+            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiChatResponse);
+            var choice = resp?.Choices.FirstOrDefault();
+            var content = choice?.Message?.Content ?? "";
+            var (parsed, conformant, violations, preview) = ValidatePerson(content);
+            string? note = parsed
+                ? (conformant ? null : "returned JSON did not match the requested schema")
+                : "response was not valid JSON (endpoint may not support structured output)";
+            return new StructuredResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                parsed, conformant, violations, preview, choice?.FinishReason,
+                resp?.Usage?.PromptTokens ?? 0,
+                resp?.Usage?.CompletionTokens ?? 0,
+                resp?.Usage?.TotalTokens ?? 0,
+                note, null);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new StructuredResult(e, model, false, null, sw.ElapsedMilliseconds,
+                false, false, Array.Empty<string>(), null, null, 0, 0, 0, null, ex.Message);
+        }
+    }
+
+    // Validate a model response against the fixed { name: string, age: integer }
+    // schema. Returns (parsedAsJson, schemaConformant, violations, objectPreview).
+    internal static (bool Parsed, bool Conformant, string[] Violations, string? Preview)
+        ValidatePerson(string content)
+    {
+        JsonElement root;
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            root = doc.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return (false, false, Array.Empty<string>(), Trunc(content.Trim(), 120));
+        }
+
+        var violations = new List<string>();
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            violations.Add($"root is {root.ValueKind}, expected object");
+            return (true, false, violations.ToArray(), Trunc(content.Trim(), 120));
+        }
+
+        if (!root.TryGetProperty("name", out var name))
+            violations.Add("missing required field 'name'");
+        else if (name.ValueKind != JsonValueKind.String)
+            violations.Add($"'name' is {name.ValueKind}, expected string");
+
+        if (!root.TryGetProperty("age", out var age))
+            violations.Add("missing required field 'age'");
+        else if (age.ValueKind != JsonValueKind.Number || !age.TryGetInt64(out _))
+            violations.Add($"'age' is not an integer ({age.ValueKind})");
+
+        var preview = Trunc(root.GetRawText().Replace("\n", " ").Replace("\r", ""), 160);
+        return (true, violations.Count == 0, violations.ToArray(), preview);
+    }
+
     public static async Task<VisionResult> VisionAsync(
         HttpClient http, string endpoint, string model, string imageUrl, string imageSource,
         string prompt, int maxTokens, CancellationToken ct)

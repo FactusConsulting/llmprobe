@@ -107,6 +107,144 @@ public class JsonSerializationTests
     }
 }
 
+public class ReasoningTests
+{
+    [Fact]
+    public void ReasoningResult_HasStableFieldNames()
+    {
+        var result = new ReasoningResult("http://infer:8080", "deepseek-r1", true,
+            200, 1500, true, "reasoning_content", 240, 980, 12, "stop", 30, 250, 280, "9", null, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.ReasoningResult);
+
+        Assert.Contains("\"reasoning_detected\"", json);
+        Assert.Contains("\"reasoning_channel\"", json);
+        Assert.Contains("\"reasoning_tokens\"", json);
+        Assert.Contains("\"answer_preview\"", json);
+        Assert.DoesNotContain("\"ReasoningDetected\"", json);
+    }
+
+    [Fact]
+    public void DetectReasoning_DetectsReasoningContentChannel()
+    {
+        var (detected, channel, reasoning, answer) = Probe.DetectReasoning("The answer is 9.", "let me think...", 0);
+        Assert.True(detected);
+        Assert.Equal("reasoning_content", channel);
+        Assert.Equal("let me think...", reasoning);
+        Assert.Equal("The answer is 9.", answer);
+    }
+
+    [Fact]
+    public void DetectReasoning_ExtractsThinkTagAndStripsItFromAnswer()
+    {
+        var (detected, channel, reasoning, answer) =
+            Probe.DetectReasoning("<think>17 - 8 = 9</think>The answer is 9.", null, 0);
+        Assert.True(detected);
+        Assert.Equal("think_tag", channel);
+        Assert.Equal("17 - 8 = 9", reasoning);
+        Assert.Equal("The answer is 9.", answer);
+    }
+
+    [Fact]
+    public void DetectReasoning_FallsBackToReasoningTokenCount()
+    {
+        var (detected, channel, _, answer) = Probe.DetectReasoning("9", null, 240);
+        Assert.True(detected);
+        Assert.Equal("reasoning_tokens", channel);
+        Assert.Equal("9", answer);
+    }
+
+    [Fact]
+    public void DetectReasoning_ReportsNoReasoningForPlainAnswer()
+    {
+        var (detected, channel, _, _) = Probe.DetectReasoning("9", null, 0);
+        Assert.False(detected);
+        Assert.Null(channel);
+    }
+
+    [Fact]
+    public void OpenAiReasoningResponse_ParsesReasoningTokensFromUsageDetails()
+    {
+        const string raw = """
+        {
+          "choices": [{
+            "message": { "role": "assistant", "content": "9", "reasoning_content": "17 minus 8 is 9" },
+            "finish_reason": "stop"
+          }],
+          "usage": {
+            "prompt_tokens": 30, "completion_tokens": 250, "total_tokens": 280,
+            "completion_tokens_details": { "reasoning_tokens": 240 }
+          }
+        }
+        """;
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiReasoningResponse);
+        Assert.Equal("17 minus 8 is 9", resp!.Choices[0].Message!.ReasoningContent);
+        Assert.Equal(240, resp.Usage!.CompletionTokensDetails!.ReasoningTokens);
+    }
+}
+
+public class StructuredTests
+{
+    [Fact]
+    public void StructuredResult_HasStableFieldNames()
+    {
+        var result = new StructuredResult("http://infer:8080", "gpt-4o", true,
+            200, 200, true, true, Array.Empty<string>(), "{\"name\":\"Alice\",\"age\":30}", "stop", 20, 12, 32, null, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.StructuredResult);
+
+        Assert.Contains("\"parsed_as_json\"", json);
+        Assert.Contains("\"schema_conformant\"", json);
+        Assert.Contains("\"schema_violations\"", json);
+        Assert.Contains("\"object_preview\"", json);
+        Assert.DoesNotContain("\"ParsedAsJson\"", json);
+    }
+
+    [Fact]
+    public void ValidatePerson_AcceptsConformantObject()
+    {
+        var (parsed, conformant, violations, preview) = Probe.ValidatePerson("{\"name\":\"Alice\",\"age\":30}");
+        Assert.True(parsed);
+        Assert.True(conformant);
+        Assert.Empty(violations);
+        Assert.Contains("Alice", preview!);
+    }
+
+    [Fact]
+    public void ValidatePerson_FlagsMissingAndMistypedFields()
+    {
+        var (parsed, conformant, violations, _) = Probe.ValidatePerson("{\"name\":42}");
+        Assert.True(parsed);
+        Assert.False(conformant);
+        Assert.Contains(violations, v => v.Contains("'name'"));
+        Assert.Contains(violations, v => v.Contains("age"));
+    }
+
+    [Fact]
+    public void ValidatePerson_RejectsNonIntegerAge()
+    {
+        var (parsed, conformant, violations, _) = Probe.ValidatePerson("{\"name\":\"Bob\",\"age\":3.5}");
+        Assert.True(parsed);
+        Assert.False(conformant);
+        Assert.Contains(violations, v => v.Contains("age"));
+    }
+
+    [Fact]
+    public void ValidatePerson_ReportsNonJsonAsNotParsed()
+    {
+        var (parsed, conformant, _, _) = Probe.ValidatePerson("I cannot do that.");
+        Assert.False(parsed);
+        Assert.False(conformant);
+    }
+
+    [Fact]
+    public void ValidatePerson_FlagsNonObjectRoot()
+    {
+        var (parsed, conformant, violations, _) = Probe.ValidatePerson("[1,2,3]");
+        Assert.True(parsed);
+        Assert.False(conformant);
+        Assert.Contains(violations, v => v.Contains("expected object"));
+    }
+}
+
 public class VisionTests
 {
     [Fact]
