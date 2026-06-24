@@ -111,6 +111,87 @@ public sealed class RerankSettings : EndpointSettings
     public string[] ResolvedDocuments() => Probe.ExpandLines(Documents);
 }
 
+public sealed class VisionSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("default")]
+    [Description("Multimodal model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "default";
+
+    [CommandOption("-i|--image <IMAGE>")]
+    [Description("Image to send: an http(s):// URL, or a local file path / @file inlined as a base64 data: URL (png/jpeg/webp/gif).")]
+    public required string Image { get; init; }
+
+    [CommandOption("-p|--prompt <PROMPT>")]
+    [DefaultValue("Describe this image in one word.")]
+    [Description("Prompt sent alongside the image.")]
+    public string Prompt { get; init; } = "Describe this image in one word.";
+
+    [CommandOption("--max-tokens <N>")]
+    [DefaultValue(32)]
+    [Description("Maximum completion tokens.")]
+    public int MaxTokens { get; init; } = 32;
+}
+
+public sealed class ToolsSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("default")]
+    [Description("Model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "default";
+
+    [CommandOption("-p|--prompt <PROMPT>")]
+    [DefaultValue("What's the weather in Copenhagen? Use the tool.")]
+    [Description("Prompt designed to trigger a tool call.")]
+    public string Prompt { get; init; } = "What's the weather in Copenhagen? Use the tool.";
+
+    [CommandOption("--max-tokens <N>")]
+    [DefaultValue(128)]
+    [Description("Maximum completion tokens.")]
+    public int MaxTokens { get; init; } = 128;
+}
+
+public sealed class VisionCommand : AsyncCommand<VisionSettings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext context, VisionSettings s)
+    {
+        s.ApplyToRender();
+        // Spectre does not enforce the C# `required` modifier, so a missing -i
+        // leaves Image null. Validate before use instead of throwing a raw NRE.
+        if (string.IsNullOrWhiteSpace(s.Image))
+        {
+            Render.Error("no image provided", "Pass an image URL or local path with -i/--image (e.g. -i https://… or -i ./cat.png)");
+            return 78;
+        }
+        string url, source;
+        try
+        {
+            (url, source) = Probe.ResolveImage(s.Image);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            Render.Error($"could not read image: {ex.Message}", "Check the path, or pass an http(s):// URL instead");
+            return 78;
+        }
+        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+        var r = await Probe.VisionAsync(http, s.Endpoint, s.Model, url, source, s.Prompt, s.MaxTokens, default);
+        Render.Vision(r);
+        return r.Ok ? 0 : 74;
+    }
+}
+
+public sealed class ToolsCommand : AsyncCommand<ToolsSettings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext context, ToolsSettings s)
+    {
+        s.ApplyToRender();
+        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+        var r = await Probe.ToolsAsync(http, s.Endpoint, s.Model, s.Prompt, s.MaxTokens, default);
+        Render.Tools(r);
+        return r.Ok ? 0 : 74;
+    }
+}
+
 public sealed class PingCommand : AsyncCommand<EndpointSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s)
@@ -221,7 +302,8 @@ public static class AgentGuidance
               Validate that an OpenAI-compatible LLM endpoint is reachable, identify
               what model(s) it serves, and measure latency/throughput before relying
               on it. Use for health checks, regression testing, and capability discovery.
-              Covers chat (test/stream), embeddings (embed) and rerankers (rerank).
+              Covers chat (test/stream), embeddings (embed), rerankers (rerank),
+              vision/multimodal input (vision) and function/tool calling (tools).
 
             SAFE BY DEFAULT
               All commands are read-mostly (single requests, --max-tokens defaults to 16).
@@ -230,6 +312,7 @@ public static class AgentGuidance
             COMMANDS BY ENDPOINT
               ping/models      -> /v1/models (+ /health)
               test/stream/caps -> /v1/chat/completions
+              vision/tools     -> /v1/chat/completions (image input / tool calling)
               embed            -> /v1/embeddings   (reports dimensions + L2 norm)
               rerank           -> /v1/rerank       (reports ordering + relevance scores)
               A model-aware gateway routes by the request's model name, so pass -m

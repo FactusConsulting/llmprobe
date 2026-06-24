@@ -123,6 +123,48 @@ public static class Render
         AnsiConsole.Write(t);
     }
 
+    public static void Vision(VisionResult r)
+    {
+        if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.VisionResult)); return; }
+        if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} vision [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
+        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow("image", Markup.Escape(r.ImageSource));
+        t.AddRow("accepted", r.ImageAccepted ? "[green]yes[/]" : "[red]no[/]");
+        t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
+        if (r.ResponsePreview != null) t.AddRow("response", $"[italic]{Markup.Escape(r.ResponsePreview)}[/]");
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+    }
+
+    public static void Tools(ToolsResult r)
+    {
+        if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.ToolsResult)); return; }
+        if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} tools [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
+        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow("tool call", r.ToolCalled ? "[green]yes[/]" : "[grey]no[/]");
+        if (r.ToolCalled)
+        {
+            if (r.FunctionName != null) t.AddRow("function", $"[yellow]{Markup.Escape(r.FunctionName)}[/]");
+            if (r.FunctionArguments != null) t.AddRow("arguments", $"[italic]{Markup.Escape(r.FunctionArguments)}[/]");
+        }
+        else if (r.Ok && r.Error == null)
+        {
+            t.AddRow("note", "no tool call (model answered directly)");
+            if (!string.IsNullOrEmpty(r.ResponsePreview)) t.AddRow("response", $"[italic]{Markup.Escape(r.ResponsePreview)}[/]");
+        }
+        t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+    }
+
     public static void Error(string error, string? hint = null)
     {
         if (Format == OutputFormat.Json)

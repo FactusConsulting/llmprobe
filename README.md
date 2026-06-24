@@ -17,13 +17,15 @@ llmprobe test http://infer:8000 -m gemma4-26b  # one-shot chat completion
 llmprobe stream http://infer:8000 -m gemma4-26b # streaming with TTFT measurement
 llmprobe embed http://infer:8000 -i "hello"    # embedding: dimensions + vector norm
 llmprobe rerank http://infer:8000 -q "q" -d a -d b # rank documents against a query
+llmprobe vision http://infer:8000 -i ./cat.png # probe image (multimodal) input support
+llmprobe tools http://infer:8000               # probe function/tool calling support
 llmprobe capabilities http://infer:8000        # detect features (streaming, JSON, vision)
 llmprobe help-ai                               # guidance for AI agents using this tool
 ```
 
 Works against any OpenAI-compatible endpoint: **vLLM**, **llama.cpp** (`llama-server`), **Ollama**, **OpenAI**, **Anthropic** (via gateways), **OpenRouter**, **Mistral**, custom RAG-gateways.
 
-Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`capabilities` → `/v1/chat/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`.
+Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`vision`/`tools`/`capabilities` → `/v1/chat/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`.
 
 ## Why this exists (the agent angle)
 
@@ -92,6 +94,43 @@ tokens      ~115 (approx)
 throughput  242.7 tok/s
 finish      stop
 ```
+
+### Probe multimodal (image) input
+
+```sh
+# Remote image URL
+$ llmprobe vision http://infer:8000 -m qwen2.5-vl -i https://example.com/cat.png
+✓ vision qwen2.5-vl @ http://infer:8000
+latency   880 ms
+image     https://example.com/cat.png
+accepted  yes
+tokens    prompt=1024 completion=2 total=1026
+finish    stop
+response  cat
+
+# Local file is read and inlined as a base64 data: URL (png/jpeg/webp/gif)
+llmprobe vision http://infer:8000 -i ./diagram.png -p "What does this show?" --json
+```
+
+If the model can't accept images, `accepted` is `no` and the server's error
+(e.g. "image input not supported") is reported in the `error` field.
+
+### Probe function / tool calling
+
+```sh
+$ llmprobe tools http://infer:8000 -m gpt-4o
+✓ tools gpt-4o @ http://infer:8000
+latency    640 ms
+tool call  yes
+function   get_weather
+arguments  {"location":"Copenhagen"}
+tokens     prompt=80 completion=18 total=98
+finish     tool_calls
+```
+
+It sends a single `get_weather(location)` tool definition with `tool_choice: auto`
+and a prompt that should trigger it. If the model answers directly instead, `tool
+call` is `no` and the direct response is shown.
 
 ### Compose with shell
 

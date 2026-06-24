@@ -45,6 +45,14 @@ app.Configure(config =>
         .WithDescription("Rank documents against a query via /v1/rerank; report ordering and scores.")
         .WithExample("rerank", "https://infer:8000", "-m", "<reranker-model>", "-q", "what is the capital?", "-d", "Copenhagen is the capital", "-d", "a cat is sleeping")
         .WithExample("rerank", "https://infer:8000", "-q", "@query.txt", "-d", "@docs.txt", "--json");
+    config.AddCommand<VisionCommand>("vision")
+        .WithDescription("Probe whether the model accepts image input (multimodal chat).")
+        .WithExample("vision", "https://infer:8000", "-m", "<vision-model>", "-i", "https://example.com/cat.png")
+        .WithExample("vision", "https://infer:8000", "-i", "./diagram.png", "--json");
+    config.AddCommand<ToolsCommand>("tools")
+        .WithDescription("Probe whether the model performs function/tool calling.")
+        .WithExample("tools", "https://infer:8000", "-m", "<model>")
+        .WithExample("tools", "https://infer:8000", "-p", "What's the weather in Paris? Use the tool.", "--json");
     config.AddCommand<CapabilitiesCommand>("capabilities")
         .WithAlias("caps")
         .WithDescription("Detect features the endpoint supports (streaming, json mode, logprobs, ...).")

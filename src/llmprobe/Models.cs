@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace LlmProbe;
@@ -22,6 +23,11 @@ namespace LlmProbe;
 [JsonSerializable(typeof(OpenAiEmbeddingResponse))]
 [JsonSerializable(typeof(OpenAiRerankRequest))]
 [JsonSerializable(typeof(OpenAiRerankResponse))]
+[JsonSerializable(typeof(VisionResult))]
+[JsonSerializable(typeof(ToolsResult))]
+[JsonSerializable(typeof(OpenAiVisionRequest))]
+[JsonSerializable(typeof(OpenAiToolsRequest))]
+[JsonSerializable(typeof(OpenAiToolsResponse))]
 public partial class JsonContext : JsonSerializerContext { }
 
 public record PingResult(
@@ -181,3 +187,97 @@ public record OpenAiRerankResponse(
     [property: JsonPropertyName("results")] OpenAiRerankResultEntry[] Results,
     [property: JsonPropertyName("model")] string? Model,
     [property: JsonPropertyName("usage")] OpenAiRerankUsage? Usage);
+
+public record VisionResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    int? StatusCode,
+    long LatencyMs,
+    bool ImageAccepted,
+    string ImageSource,
+    string? FinishReason,
+    int PromptTokens,
+    int CompletionTokens,
+    int TotalTokens,
+    string? ResponsePreview,
+    string? Error);
+
+public record ToolsResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    int? StatusCode,
+    long LatencyMs,
+    bool ToolCalled,
+    string? FunctionName,
+    string? FunctionArguments,
+    string? FinishReason,
+    int PromptTokens,
+    int CompletionTokens,
+    int TotalTokens,
+    string? ResponsePreview,
+    string? Error);
+
+// --- Vision (multimodal chat) request shapes ---
+// A user message whose content is an array of parts: one image_url part plus a
+// short text part. Kept separate from OpenAiChatRequest (string content) so the
+// existing chat commands are untouched.
+public record OpenAiImageUrl(
+    [property: JsonPropertyName("url")] string Url);
+
+public record OpenAiContentPart(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("text")] string? Text = null,
+    [property: JsonPropertyName("image_url")] OpenAiImageUrl? ImageUrl = null);
+
+public record OpenAiVisionMessage(
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("content")] OpenAiContentPart[] Content);
+
+public record OpenAiVisionRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("messages")] OpenAiVisionMessage[] Messages,
+    [property: JsonPropertyName("max_tokens")] int? MaxTokens = null,
+    [property: JsonPropertyName("temperature")] double? Temperature = null);
+
+// --- Tool / function calling request shapes ---
+public record OpenAiFunctionDef(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("description")] string Description,
+    [property: JsonPropertyName("parameters")] JsonElement Parameters);
+
+public record OpenAiToolDef(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("function")] OpenAiFunctionDef Function);
+
+public record OpenAiToolsRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("messages")] OpenAiMessage[] Messages,
+    [property: JsonPropertyName("tools")] OpenAiToolDef[] Tools,
+    [property: JsonPropertyName("tool_choice")] string? ToolChoice = null,
+    [property: JsonPropertyName("max_tokens")] int? MaxTokens = null,
+    [property: JsonPropertyName("temperature")] double? Temperature = null);
+
+// --- Tool calling response shapes ---
+public record OpenAiToolCallFunction(
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("arguments")] string? Arguments);
+
+public record OpenAiToolCall(
+    [property: JsonPropertyName("id")] string? Id,
+    [property: JsonPropertyName("type")] string? Type,
+    [property: JsonPropertyName("function")] OpenAiToolCallFunction? Function);
+
+public record OpenAiToolsMessage(
+    [property: JsonPropertyName("role")] string? Role,
+    [property: JsonPropertyName("content")] string? Content,
+    [property: JsonPropertyName("tool_calls")] OpenAiToolCall[]? ToolCalls);
+
+public record OpenAiToolsChoice(
+    [property: JsonPropertyName("message")] OpenAiToolsMessage? Message,
+    [property: JsonPropertyName("finish_reason")] string? FinishReason);
+
+public record OpenAiToolsResponse(
+    [property: JsonPropertyName("choices")] OpenAiToolsChoice[] Choices,
+    [property: JsonPropertyName("usage")] OpenAiUsage? Usage);

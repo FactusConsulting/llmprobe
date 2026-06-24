@@ -293,6 +293,126 @@ public static class Probe
         }
     }
 
+    public static async Task<VisionResult> VisionAsync(
+        HttpClient http, string endpoint, string model, string imageUrl, string imageSource,
+        string prompt, int maxTokens, CancellationToken ct)
+    {
+        var e = Normalize(endpoint);
+        var sw = Stopwatch.StartNew();
+        var content = new[]
+        {
+            new OpenAiContentPart("text", Text: prompt),
+            new OpenAiContentPart("image_url", ImageUrl: new OpenAiImageUrl(imageUrl)),
+        };
+        var body = new OpenAiVisionRequest(model,
+            new[] { new OpenAiVisionMessage("user", content) }, MaxTokens: maxTokens, Temperature: 0);
+        var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiVisionRequest);
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        try
+        {
+            using var res = await http.SendAsync(req, ct);
+            sw.Stop();
+            var raw = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                return new VisionResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                    false, imageSource, null, 0, 0, 0, null, Trunc(raw, 200));
+            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiChatResponse);
+            var choice = resp?.Choices.FirstOrDefault();
+            var text = choice?.Message?.Content ?? "";
+            return new VisionResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                true, imageSource, choice?.FinishReason,
+                resp?.Usage?.PromptTokens ?? 0,
+                resp?.Usage?.CompletionTokens ?? 0,
+                resp?.Usage?.TotalTokens ?? 0,
+                Trunc(text, 160), null);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new VisionResult(e, model, false, null, sw.ElapsedMilliseconds,
+                false, imageSource, null, 0, 0, 0, null, ex.Message);
+        }
+    }
+
+    public static async Task<ToolsResult> ToolsAsync(
+        HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
+    {
+        var e = Normalize(endpoint);
+        var sw = Stopwatch.StartNew();
+        var parameters = JsonSerializer.Deserialize<JsonElement>("""
+            {"type":"object","properties":{"location":{"type":"string","description":"City name, e.g. Copenhagen"}},"required":["location"]}
+            """);
+        var tool = new OpenAiToolDef("function",
+            new OpenAiFunctionDef("get_weather", "Get the current weather for a location.", parameters));
+        var body = new OpenAiToolsRequest(model,
+            new[] { new OpenAiMessage("user", prompt) },
+            new[] { tool }, ToolChoice: "auto", MaxTokens: maxTokens, Temperature: 0);
+        var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiToolsRequest);
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        try
+        {
+            using var res = await http.SendAsync(req, ct);
+            sw.Stop();
+            var raw = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                return new ToolsResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                    false, null, null, null, 0, 0, 0, null, Trunc(raw, 200));
+            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiToolsResponse);
+            var choice = resp?.Choices.FirstOrDefault();
+            var call = choice?.Message?.ToolCalls?.FirstOrDefault();
+            var called = call?.Function != null;
+            return new ToolsResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
+                called, call?.Function?.Name, call?.Function?.Arguments, choice?.FinishReason,
+                resp?.Usage?.PromptTokens ?? 0,
+                resp?.Usage?.CompletionTokens ?? 0,
+                resp?.Usage?.TotalTokens ?? 0,
+                Trunc(choice?.Message?.Content ?? "", 160), null);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new ToolsResult(e, model, false, null, sw.ElapsedMilliseconds,
+                false, null, null, null, 0, 0, 0, null, ex.Message);
+        }
+    }
+
+    // Resolve an --image value into a (url, source-label) pair. An http(s):// value
+    // is passed through as a remote URL; anything else is treated as a local file
+    // path (with optional leading '@'), read and inlined as a base64 data: URL with
+    // the mime type inferred from the extension. Throws on unreadable files so the
+    // command can surface a clean config error (exit 78).
+    public static (string Url, string Source) ResolveImage(string image)
+    {
+        if (image.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || image.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return (image, image);
+
+        var path = image.StartsWith('@') ? image[1..] : image;
+        var bytes = File.ReadAllBytes(path);
+        var mime = MimeFromExtension(path);
+        var dataUrl = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
+        return (dataUrl, path);
+    }
+
+    internal static string MimeFromExtension(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            ".gif" => "image/gif",
+            _ => "application/octet-stream",
+        };
+    }
+
     // Expand document/input values: a value of "@-" reads stdin, "@file" reads a
     // file; in both cases each non-empty line becomes a separate entry. Any other
     // value is taken literally. Used by the rerank command so a corpus can be fed
