@@ -85,6 +85,40 @@ public static class Render
         }
     }
 
+    public static void Embed(EmbedResult r)
+    {
+        if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.EmbedResult)); return; }
+        if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
+        var status = r.Ok ? "[green]✓[/]" : "[red]✗[/]";
+        AnsiConsole.MarkupLine($"{status} embed [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
+        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow("inputs", r.Inputs.ToString());
+        t.AddRow("dimensions", $"[yellow]{r.Dimensions}[/]");
+        t.AddRow("norm", $"{r.Norm:F4}");
+        if (r.TotalTokens > 0) t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.Error != null) t.AddRow("[red]error[/]", Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+    }
+
+    public static void Rerank(RerankResult r)
+    {
+        if (Format == OutputFormat.Json) { Json(JsonSerializer.Serialize(r, JsonContext.Default.RerankResult)); return; }
+        if (Quiet) { Console.WriteLine(r.Ok ? "ok" : "fail"); return; }
+        var status = r.Ok ? "[green]✓[/]" : "[red]✗[/]";
+        AnsiConsole.MarkupLine($"{status} rerank [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/] [grey]({r.LatencyMs} ms, {r.Documents} docs)[/]");
+        if (r.Error != null) { AnsiConsole.MarkupLine($"[red]error:[/] {Markup.Escape(r.Error)}"); return; }
+        var t = new Table().Border(TableBorder.Minimal).AddColumn("rank").AddColumn("idx").AddColumn("score").AddColumn("document");
+        var rank = 1;
+        foreach (var item in r.Ranking)
+        {
+            t.AddRow(rank.ToString(), item.Index.ToString(), $"[yellow]{item.Score:F4}[/]",
+                item.DocumentPreview != null ? $"[italic]{Markup.Escape(item.DocumentPreview)}[/]" : "—");
+            rank++;
+        }
+        AnsiConsole.Write(t);
+    }
+
     public static void Error(string error, string? hint = null)
     {
         if (Format == OutputFormat.Json)

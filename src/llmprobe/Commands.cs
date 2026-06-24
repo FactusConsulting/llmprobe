@@ -62,6 +62,55 @@ public sealed class ChatSettings : EndpointSettings
     }
 }
 
+public sealed class EmbedSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("default")]
+    [Description("Embedding model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "default";
+
+    [CommandOption("-i|--input <INPUT>")]
+    [DefaultValue("The quick brown fox jumps over the lazy dog.")]
+    [Description("Text to embed. Use @file.txt to read from file, or @- for stdin.")]
+    public string Input { get; init; } = "The quick brown fox jumps over the lazy dog.";
+
+    public string ResolvedInput()
+    {
+        if (Input == "@-") return Console.In.ReadToEnd().Trim();
+        if (Input.StartsWith('@')) return File.ReadAllText(Input[1..]).Trim();
+        return Input;
+    }
+}
+
+public sealed class RerankSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("default")]
+    [Description("Reranker model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "default";
+
+    [CommandOption("-q|--query <QUERY>")]
+    [Description("Query to rank documents against. Use @file.txt or @- for stdin.")]
+    public required string Query { get; init; }
+
+    [CommandOption("-d|--document <DOC>")]
+    [Description("A candidate document. Repeatable. A @file or @- value is split into one document per line.")]
+    public string[] Documents { get; init; } = Array.Empty<string>();
+
+    [CommandOption("--top-n <N>")]
+    [Description("Return only the top N documents (server-side). Default: all.")]
+    public int? TopN { get; init; }
+
+    public string ResolvedQuery()
+    {
+        if (Query == "@-") return Console.In.ReadToEnd().Trim();
+        if (Query.StartsWith('@')) return File.ReadAllText(Query[1..]).Trim();
+        return Query;
+    }
+
+    public string[] ResolvedDocuments() => Probe.ExpandLines(Documents);
+}
+
 public sealed class PingCommand : AsyncCommand<EndpointSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext ctx, EndpointSettings s)
@@ -111,6 +160,36 @@ public sealed class StreamCommand : AsyncCommand<ChatSettings>
     }
 }
 
+public sealed class EmbedCommand : AsyncCommand<EmbedSettings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext ctx, EmbedSettings s)
+    {
+        s.ApplyToRender();
+        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+        var r = await Probe.EmbedAsync(http, s.Endpoint, s.Model, new[] { s.ResolvedInput() }, default);
+        Render.Embed(r);
+        return r.Ok ? 0 : 74;
+    }
+}
+
+public sealed class RerankCommand : AsyncCommand<RerankSettings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext ctx, RerankSettings s)
+    {
+        s.ApplyToRender();
+        var docs = s.ResolvedDocuments();
+        if (docs.Length == 0)
+        {
+            Render.Error("no documents provided", "Pass one or more with -d/--document (repeatable), or -d @docs.txt");
+            return 78;
+        }
+        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+        var r = await Probe.RerankAsync(http, s.Endpoint, s.Model, s.ResolvedQuery(), docs, s.TopN, default);
+        Render.Rerank(r);
+        return r.Ok ? 0 : 74;
+    }
+}
+
 public sealed class CapabilitiesCommand : AsyncCommand<EndpointSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext ctx, EndpointSettings s)
@@ -132,10 +211,19 @@ public static class AgentGuidance
               Validate that an OpenAI-compatible LLM endpoint is reachable, identify
               what model(s) it serves, and measure latency/throughput before relying
               on it. Use for health checks, regression testing, and capability discovery.
+              Covers chat (test/stream), embeddings (embed) and rerankers (rerank).
 
             SAFE BY DEFAULT
               All commands are read-mostly (single requests, --max-tokens defaults to 16).
               No state mutation. Safe to run repeatedly.
+
+            COMMANDS BY ENDPOINT
+              ping/models      -> /v1/models (+ /health)
+              test/stream/caps -> /v1/chat/completions
+              embed            -> /v1/embeddings   (reports dimensions + L2 norm)
+              rerank           -> /v1/rerank       (reports ordering + relevance scores)
+              For vLLM, embeddings/rerank usually must hit the model's own engine
+              service directly — the production-stack router only proxies chat.
 
             AUTHENTICATION
               For hosted endpoints (OpenAI, Anthropic, OpenRouter, secured vLLM):
@@ -171,6 +259,8 @@ public static class AgentGuidance
               llmprobe models http://infer:8000 --json | jq -r '.models[]'
               cat prompt.md | llmprobe stream http://infer:8000 -m gemma4-26b -p @- --json
               llmprobe capabilities https://api.openai.com --json | jq .streaming
+              llmprobe embed http://infer:8000 -m <embedding-model> -i "hello" --json | jq .dimensions
+              llmprobe rerank http://infer:8000 -q "@q.txt" -d @docs.txt --json | jq '.ranking[0]'
 
             COMPOSE WITH OTHER TOOLS
               llmprobe is a CLI. It pipes. It exits with meaningful codes. It writes

@@ -37,6 +37,14 @@ app.Configure(config =>
         .WithDescription("Stream a chat completion; measure TTFT and tokens/sec.")
         .WithExample("stream", "http://infer:8000", "-m", "gemma4-26b")
         .WithExample("stream", "http://infer:8000", "-p", "@-", "--json");
+    config.AddCommand<EmbedCommand>("embed")
+        .WithDescription("Request an embedding from /v1/embeddings; report dimensions, vector norm, latency.")
+        .WithExample("embed", "http://infer:8000", "-m", "<embedding-model>", "-i", "hello world")
+        .WithExample("embed", "http://infer:8000", "-i", "@doc.txt", "--json");
+    config.AddCommand<RerankCommand>("rerank")
+        .WithDescription("Rank documents against a query via /v1/rerank; report ordering and scores.")
+        .WithExample("rerank", "http://infer:8000", "-m", "<reranker-model>", "-q", "what is the capital?", "-d", "Copenhagen is the capital", "-d", "a cat is sleeping")
+        .WithExample("rerank", "http://infer:8000", "-q", "@query.txt", "-d", "@docs.txt", "--json");
     config.AddCommand<CapabilitiesCommand>("capabilities")
         .WithAlias("caps")
         .WithDescription("Detect features the endpoint supports (streaming, json mode, logprobs, ...).")

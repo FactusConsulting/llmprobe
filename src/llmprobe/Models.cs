@@ -11,11 +11,17 @@ namespace LlmProbe;
 [JsonSerializable(typeof(TestResult))]
 [JsonSerializable(typeof(StreamResult))]
 [JsonSerializable(typeof(CapabilitiesResult))]
+[JsonSerializable(typeof(EmbedResult))]
+[JsonSerializable(typeof(RerankResult))]
 [JsonSerializable(typeof(ErrorResult))]
 [JsonSerializable(typeof(OpenAiChatRequest))]
 [JsonSerializable(typeof(OpenAiChatResponse))]
 [JsonSerializable(typeof(OpenAiModelsResponse))]
 [JsonSerializable(typeof(OpenAiStreamChunk))]
+[JsonSerializable(typeof(OpenAiEmbeddingRequest))]
+[JsonSerializable(typeof(OpenAiEmbeddingResponse))]
+[JsonSerializable(typeof(OpenAiRerankRequest))]
+[JsonSerializable(typeof(OpenAiRerankResponse))]
 public partial class JsonContext : JsonSerializerContext { }
 
 public record PingResult(
@@ -69,6 +75,35 @@ public record CapabilitiesResult(
     string[] AvailableModels,
     string? AuthNote = null);
 
+public record EmbedResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    int? StatusCode,
+    long LatencyMs,
+    int Inputs,
+    int Dimensions,
+    double Norm,
+    int PromptTokens,
+    int TotalTokens,
+    string? Error);
+
+public record RerankResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    int? StatusCode,
+    long LatencyMs,
+    int Documents,
+    RerankItem[] Ranking,
+    int TotalTokens,
+    string? Error);
+
+public record RerankItem(
+    int Index,
+    double Score,
+    string? DocumentPreview);
+
 public record ErrorResult(string Error, string? Hint);
 
 public record OpenAiMessage(
@@ -111,3 +146,38 @@ public record OpenAiStreamChoice(
 
 public record OpenAiStreamChunk(
     [property: JsonPropertyName("choices")] OpenAiStreamChoice[]? Choices);
+
+public record OpenAiEmbeddingRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("input")] string[] Input);
+
+public record OpenAiEmbeddingData(
+    [property: JsonPropertyName("embedding")] float[] Embedding,
+    [property: JsonPropertyName("index")] int Index);
+
+public record OpenAiEmbeddingResponse(
+    [property: JsonPropertyName("data")] OpenAiEmbeddingData[] Data,
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("usage")] OpenAiUsage? Usage);
+
+public record OpenAiRerankRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("query")] string Query,
+    [property: JsonPropertyName("documents")] string[] Documents,
+    [property: JsonPropertyName("top_n")] int? TopN = null);
+
+public record OpenAiRerankDocument(
+    [property: JsonPropertyName("text")] string? Text);
+
+public record OpenAiRerankResultEntry(
+    [property: JsonPropertyName("index")] int Index,
+    [property: JsonPropertyName("relevance_score")] double RelevanceScore,
+    [property: JsonPropertyName("document")] OpenAiRerankDocument? Document);
+
+public record OpenAiRerankUsage(
+    [property: JsonPropertyName("total_tokens")] int TotalTokens);
+
+public record OpenAiRerankResponse(
+    [property: JsonPropertyName("results")] OpenAiRerankResultEntry[] Results,
+    [property: JsonPropertyName("model")] string? Model,
+    [property: JsonPropertyName("usage")] OpenAiRerankUsage? Usage);

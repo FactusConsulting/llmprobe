@@ -15,11 +15,15 @@ llmprobe ping http://localhost:11434           # reachability + latency
 llmprobe models http://infer:8000              # list available models
 llmprobe test http://infer:8000 -m gemma4-26b  # one-shot chat completion
 llmprobe stream http://infer:8000 -m gemma4-26b # streaming with TTFT measurement
+llmprobe embed http://infer:8000 -i "hello"    # embedding: dimensions + vector norm
+llmprobe rerank http://infer:8000 -q "q" -d a -d b # rank documents against a query
 llmprobe capabilities http://infer:8000        # detect features (streaming, JSON, vision)
 llmprobe help-ai                               # guidance for AI agents using this tool
 ```
 
 Works against any OpenAI-compatible endpoint: **vLLM**, **llama.cpp** (`llama-server`), **Ollama**, **OpenAI**, **Anthropic** (via gateways), **OpenRouter**, **Mistral**, custom RAG-gateways.
+
+Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`capabilities` → `/v1/chat/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`. (For vLLM, embeddings/rerank typically need to target the model's own engine service — the production-stack router only proxies chat.)
 
 ## Why this exists (the agent angle)
 

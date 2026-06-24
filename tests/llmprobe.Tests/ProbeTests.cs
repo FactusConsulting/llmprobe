@@ -79,4 +79,53 @@ public class JsonSerializationTests
         Assert.Contains("\"tokens_per_sec\"", json);
         Assert.Contains("\"finish_reason\"", json);
     }
+
+    [Fact]
+    public void EmbedResult_HasStableFieldNames()
+    {
+        var result = new EmbedResult("http://infer:8080", "qwen3-embedding-8b", true,
+            200, 21, 1, 4096, 1.0, 7, 7, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.EmbedResult);
+
+        Assert.Contains("\"dimensions\"", json);
+        Assert.Contains("\"norm\"", json);
+        Assert.Contains("\"inputs\"", json);
+        Assert.Contains("\"total_tokens\"", json);
+    }
+
+    [Fact]
+    public void RerankResult_HasStableFieldNames()
+    {
+        var result = new RerankResult("http://infer:8080", "qwen3-reranker-8b", true,
+            200, 33, 2, new[] { new RerankItem(1, 0.92, "doc b"), new RerankItem(0, 0.10, "doc a") }, 12, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.RerankResult);
+
+        Assert.Contains("\"ranking\"", json);
+        Assert.Contains("\"score\"", json);
+        Assert.Contains("\"document_preview\"", json);
+        Assert.Contains("\"index\"", json);
+    }
+}
+
+public class InputExpansionTests
+{
+    [Fact]
+    public void ExpandLines_TakesLiteralValuesAsIs()
+    {
+        var result = Probe.ExpandLines(new[] { "doc one", "doc two" });
+        Assert.Equal(new[] { "doc one", "doc two" }, result);
+    }
+
+    [Fact]
+    public void SplitLines_TrimsAndDropsBlankLines()
+    {
+        var result = Probe.SplitLines("a\r\n\n  b  \nc\n").ToArray();
+        Assert.Equal(new[] { "a", "b", "c" }, result);
+    }
+
+    [Fact]
+    public void L2Norm_ComputesEuclideanLength()
+    {
+        Assert.Equal(5.0, Probe.L2Norm(new[] { 3f, 4f }), 5);
+    }
 }
