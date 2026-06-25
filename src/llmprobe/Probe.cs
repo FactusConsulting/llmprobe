@@ -949,12 +949,11 @@ public static class Probe
     // skeleton. When outputPath is set the bytes are written there (a write failure
     // surfaces as a ConfigException -> exit 78); otherwise only metadata is reported.
     public static async Task<SpeakResult> SpeakAsync(
-        HttpClient http, string endpoint, string model, string input, string voice, string format,
+        HttpClient http, string endpoint, OpenAiSpeechRequest body,
         string? outputPath, CancellationToken ct)
     {
         var e = Normalize(endpoint);
         var sw = Stopwatch.StartNew();
-        var body = new OpenAiSpeechRequest(model, input, voice, format);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiSpeechRequest);
         var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/audio/speech")
         {
@@ -969,8 +968,8 @@ public static class Probe
             {
                 var raw = await res.Content.ReadAsStringAsync(ct);
                 var unsupported = IsUnsupportedStatus(status);
-                return new SpeakResult(e, model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
-                    voice, format, null, 0, null,
+                return new SpeakResult(e, body.Model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
+                    body.Voice, body.ResponseFormat, null, 0, null,
                     unsupported ? "not supported by this endpoint (no /v1/audio/speech route)" : null,
                     unsupported ? null : Trunc(raw, 200));
             }
@@ -980,14 +979,14 @@ public static class Probe
             var note = outputPath == null
                 ? "no -o/--output given; audio not written (metadata only)"
                 : null;
-            return new SpeakResult(e, model, true, true, status, sw.ElapsedMilliseconds,
-                voice, format, contentType, bytes.Length, outputPath, note, null);
+            return new SpeakResult(e, body.Model, true, true, status, sw.ElapsedMilliseconds,
+                body.Voice, body.ResponseFormat, contentType, bytes.Length, outputPath, note, null);
         }
         catch (Exception ex)
         {
             sw.Stop();
-            return new SpeakResult(e, model, false, true, null, sw.ElapsedMilliseconds,
-                voice, format, null, 0, outputPath, null, ex.Message);
+            return new SpeakResult(e, body.Model, false, true, null, sw.ElapsedMilliseconds,
+                body.Voice, body.ResponseFormat, null, 0, outputPath, null, ex.Message);
         }
     }
 

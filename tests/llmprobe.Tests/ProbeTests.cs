@@ -890,7 +890,7 @@ public class SpeakTests
         var outPath = Path.Combine(Path.GetTempPath(), $"llmprobe-test-{Guid.NewGuid():N}.mp3");
         try
         {
-            var r = await Probe.SpeakAsync(http, "http://infer:8080", "tts-1", "Hej", "alloy", "mp3", outPath, default);
+            var r = await Probe.SpeakAsync(http, "http://infer:8080", new OpenAiSpeechRequest("tts-1", "Hej", "alloy", "mp3"), outPath, default);
             Assert.True(r.Ok);
             Assert.True(r.Supported);
             Assert.Equal(audioBytes.Length, r.BytesReceived);
@@ -911,7 +911,7 @@ public class SpeakTests
                 Content = new ByteArrayContent(audioBytes),
             });
         using var http = new HttpClient(handler);
-        var r = await Probe.SpeakAsync(http, "http://infer:8080", "tts-1", "Hej", "alloy", "mp3", null, default);
+        var r = await Probe.SpeakAsync(http, "http://infer:8080", new OpenAiSpeechRequest("tts-1", "Hej", "alloy", "mp3"), null, default);
         Assert.True(r.Ok);
         Assert.Equal(audioBytes.Length, r.BytesReceived);
         Assert.Null(r.OutputPath);
@@ -927,7 +927,7 @@ public class SpeakTests
                 Content = new StringContent("no such route"),
             });
         using var http = new HttpClient(handler);
-        var r = await Probe.SpeakAsync(http, "http://infer:8080", "tts-1", "Hej", "alloy", "mp3", null, default);
+        var r = await Probe.SpeakAsync(http, "http://infer:8080", new OpenAiSpeechRequest("tts-1", "Hej", "alloy", "mp3"), null, default);
         Assert.True(r.Ok);          // unsupported is still a clean result (exit 0)
         Assert.False(r.Supported);
         Assert.Null(r.Error);

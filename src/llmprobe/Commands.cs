@@ -616,8 +616,8 @@ public sealed class TranscribeCommand : AsyncCommand<TranscribeSettings>
         }
         return CommandRunner.GuardConfig(async () =>
         {
-            // ReadFileBytes throws ConfigException for a missing/unreadable file;
-            // the guard turns that into a clean config error (exit 78).
+            // A missing or unreadable audio file is surfaced as a clean config
+            // error (exit code 78) by the guard wrapping this lambda.
             var audio = Probe.ReadFileBytes(s.File);
             var fileName = Path.GetFileName(s.File);
             using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
@@ -639,7 +639,8 @@ public sealed class SpeakCommand : AsyncCommand<SpeakSettings>
             // SpeakAsync throws it for an unwritable -o; the guard maps both to 78.
             var input = s.ResolvedInput();
             using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-            var r = await Probe.SpeakAsync(http, s.Endpoint, s.Model, input, s.Voice, s.Format, s.Output, default);
+            var body = new OpenAiSpeechRequest(s.Model, input, s.Voice, s.Format);
+            var r = await Probe.SpeakAsync(http, s.Endpoint, body, s.Output, default);
             Render.Speak(r);
             return r.Ok ? 0 : 74;
         });
