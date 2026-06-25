@@ -270,7 +270,7 @@ jobs:
           fi
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
           sha() {
-            curl -fsSL "$base/llmprobe-$1.tar.gz" | sha256sum | cut -d' ' -f1
+            curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$base/llmprobe-$1.tar.gz" | sha256sum | cut -d' ' -f1
           }
           osx_arm64=$(sha osx-arm64)
           osx_x64=$(sha osx-x64)
