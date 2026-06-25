@@ -105,8 +105,30 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
+    outputs:
+      # Resolved once from the tag and consumed by the downstream chocolatey /
+      # homebrew jobs. is_prerelease gates the finals-only Homebrew bump so an RC
+      # tag (vX.Y.Z-rc.N) never moves the single-version tap formula.
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      is_prerelease: ${{ steps.resolve.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: resolve
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          # Prerelease (RC) detection: a SemVer release-candidate tag carries a
+          # literal `-rc.` segment (e.g. v0.2.0-rc.1). A plain vX.Y.Z is final.
+          case "$TAG" in
+            *-rc.*) IS_PRERELEASE=true ;;
+            *)      IS_PRERELEASE=false ;;
+          esac
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Resolved $TAG -> is_prerelease=$IS_PRERELEASE"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -121,3 +143,192 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+
+  chocolatey:
+    name: Chocolatey
+    needs: release
+    runs-on: windows-latest
+    permissions:
+      contents: write   # gh-pages push for the Sleet feed
+      packages: write    # GitHub Packages NuGet push
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-win-x64
+          path: dist
+
+      - name: Build Chocolatey package
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          $version = $env:VERSION
+          $tag     = $env:TAG
+          $repo    = "${{ github.repository }}"
+          $zipName = "$($env:APP_NAME)-win-x64.zip"
+          $zip     = Join-Path dist $zipName
+          if (-not (Test-Path $zip)) { throw "Windows zip asset not found: $zip" }
+          $checksum = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          Write-Host "win-x64 zip sha256: $checksum"
+
+          # The package downloads the same zip from the published GitHub release.
+          $url64 = "https://github.com/$repo/releases/download/$tag/$zipName"
+
+          $packageDir = "Output\chocolatey\llmprobe"
+          Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$packageDir\tools" | Out-Null
+          Copy-Item packaging\windows\chocolatey\tools\*.ps1 "$packageDir\tools\"
+
+          $nuspec = Get-Content packaging\windows\chocolatey\llmprobe.nuspec -Raw
+          $nuspec = $nuspec.Replace('__VERSION__', $version)
+          Set-Content "$packageDir\llmprobe.nuspec" $nuspec -Encoding utf8
+
+          $install = Get-Content "$packageDir\tools\chocolateyinstall.ps1" -Raw
+          $install = $install.Replace('__URL64__', $url64)
+          $install = $install.Replace('__CHECKSUM64__', $checksum)
+          Set-Content "$packageDir\tools\chocolateyinstall.ps1" $install -Encoding utf8
+
+          choco pack "$packageDir\llmprobe.nuspec" --outputdirectory Output
+          if ($LASTEXITCODE -ne 0) { throw "choco pack failed" }
+
+      - name: Upload Chocolatey package to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          gh release upload "$TAG" Output/*.nupkg --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Publish Chocolatey package to GitHub Packages NuGet
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = Get-ChildItem Output\llmprobe.*.nupkg | Select-Object -First 1
+          if (-not $package) { throw "Chocolatey package was not built" }
+          $source = "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+          dotnet nuget push $package.FullName --api-key "$env:GH_TOKEN" --source "$source" --skip-duplicate
+
+      # Publishes to the public Sleet feed on gh-pages. publish-chocolatey-feed.ps1
+      # pushes the single .nupkg; Sleet keeps every prior version, so the feed
+      # accumulates releases idempotently.
+      - name: Publish public Chocolatey feed to GitHub Pages
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = Get-ChildItem Output\llmprobe.*.nupkg | Select-Object -First 1
+          if (-not $package) { throw "Chocolatey package was not built" }
+          .\scripts\windows\publish-chocolatey-feed.ps1 -PackagePath $package.FullName
+
+      - name: Publish Chocolatey package to private NuGet feed
+        shell: pwsh
+        env:
+          CHOCOLATEY_NUGET_SOURCE: ${{ secrets.CHOCOLATEY_NUGET_SOURCE }}
+          CHOCOLATEY_NUGET_API_KEY: ${{ secrets.CHOCOLATEY_NUGET_API_KEY }}
+        run: |
+          if (-not $env:CHOCOLATEY_NUGET_SOURCE) {
+            Write-Host "CHOCOLATEY_NUGET_SOURCE not set - skipping private Chocolatey/NuGet push."
+            exit 0
+          }
+          if (-not $env:CHOCOLATEY_NUGET_API_KEY) {
+            Write-Host "CHOCOLATEY_NUGET_API_KEY not set - skipping private Chocolatey/NuGet push."
+            exit 0
+          }
+          $package = Get-ChildItem Output\llmprobe.*.nupkg | Select-Object -First 1
+          if (-not $package) { throw "Chocolatey package was not built" }
+          choco push $package.FullName --source "$env:CHOCOLATEY_NUGET_SOURCE" --api-key "$env:CHOCOLATEY_NUGET_API_KEY" --force
+          if ($LASTEXITCODE -ne 0) { throw "choco push failed" }
+
+  homebrew:
+    name: Bump Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    # Skip on prerelease: Homebrew has no prerelease channel (the tap formula is a
+    # single "latest" version), so RCs are finals-only here.
+    if: needs.release.outputs.is_prerelease != 'true'
+    steps:
+      - name: Bump factusconsulting/homebrew-tools formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -e
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set - skipping Homebrew tap bump."
+            exit 0
+          fi
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          sha() {
+            curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$base/llmprobe-$1.tar.gz" | sha256sum | cut -d' ' -f1
+          }
+          osx_arm64=$(sha osx-arm64)
+          osx_x64=$(sha osx-x64)
+          linux_arm64=$(sha linux-arm64)
+          linux_x64=$(sha linux-x64)
+          echo "osx-arm64:   $osx_arm64"
+          echo "osx-x64:     $osx_x64"
+          echo "linux-arm64: $linux_arm64"
+          echo "linux-x64:   $linux_x64"
+
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/FactusConsulting/homebrew-tools.git" tap
+          f=tap/Formula/llmprobe.rb
+          cat > "$f" <<EOF
+          class Llmprobe < Formula
+            desc "Agent-friendly CLI for probing OpenAI-compatible LLM endpoints"
+            homepage "https://github.com/FactusConsulting/llmprobe"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "${base}/llmprobe-osx-arm64.tar.gz"
+                sha256 "${osx_arm64}"
+              end
+              on_intel do
+                url "${base}/llmprobe-osx-x64.tar.gz"
+                sha256 "${osx_x64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${base}/llmprobe-linux-arm64.tar.gz"
+                sha256 "${linux_arm64}"
+              end
+              on_intel do
+                url "${base}/llmprobe-linux-x64.tar.gz"
+                sha256 "${linux_x64}"
+              end
+            end
+
+            def install
+              bin.install "llmprobe"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/llmprobe --version")
+              assert_match "guidance for AI agents", shell_output("#{bin}/llmprobe --help-ai")
+            end
+          end
+          EOF
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap add Formula/llmprobe.rb
+          if git -C tap diff --cached --quiet; then
+            echo "Formula already up to date for ${VERSION}."
+            exit 0
+          fi
+          git -C tap commit -m "llmprobe ${VERSION}"
+          git -C tap push origin HEAD
