@@ -47,24 +47,33 @@ public class EndpointSettings : GlobalSettings
     public required string Endpoint { get; init; }
 }
 
-public sealed class ChatSettings : EndpointSettings
+// Shared base for the prompt-driven chat probes (test, reasoning, structured).
+// Each only differs in the default prompt/max-tokens and the option wording, so
+// the common -m/--model option and the @-/@file prompt resolution live here.
+public abstract class PromptSettings : EndpointSettings
 {
     [CommandOption("-m|--model <MODEL>")]
     [DefaultValue("default")]
     [Description("Model identifier (use 'llmprobe models <endpoint>' to list).")]
     public string Model { get; init; } = "default";
 
+    public abstract string Prompt { get; init; }
+    public abstract int MaxTokens { get; init; }
+
+    public string ResolvedPrompt() => ResolveAtValue(Prompt);
+}
+
+public sealed class ChatSettings : PromptSettings
+{
     [CommandOption("-p|--prompt <PROMPT>")]
     [DefaultValue("Reply with the single word: ok.")]
     [Description("Prompt text. Use @file.txt to read from file, or @- for stdin.")]
-    public string Prompt { get; init; } = "Reply with the single word: ok.";
+    public override string Prompt { get; init; } = "Reply with the single word: ok.";
 
     [CommandOption("--max-tokens <N>")]
     [DefaultValue(16)]
     [Description("Maximum completion tokens.")]
-    public int MaxTokens { get; init; } = 16;
-
-    public string ResolvedPrompt() => ResolveAtValue(Prompt);
+    public override int MaxTokens { get; init; } = 16;
 }
 
 public sealed class EmbedSettings : EndpointSettings
@@ -106,44 +115,30 @@ public sealed class RerankSettings : EndpointSettings
     public string[] ResolvedDocuments() => Probe.ExpandLines(Documents);
 }
 
-public sealed class ReasoningSettings : EndpointSettings
+public sealed class ReasoningSettings : PromptSettings
 {
-    [CommandOption("-m|--model <MODEL>")]
-    [DefaultValue("default")]
-    [Description("Reasoning/thinking model identifier (use 'llmprobe models <endpoint>' to list).")]
-    public string Model { get; init; } = "default";
-
     [CommandOption("-p|--prompt <PROMPT>")]
     [DefaultValue("A farmer has 17 sheep. All but 9 run away. How many are left? Think step by step, then give the final number.")]
     [Description("Reasoning prompt. Use @file.txt to read from file, or @- for stdin.")]
-    public string Prompt { get; init; } = "A farmer has 17 sheep. All but 9 run away. How many are left? Think step by step, then give the final number.";
+    public override string Prompt { get; init; } = "A farmer has 17 sheep. All but 9 run away. How many are left? Think step by step, then give the final number.";
 
     [CommandOption("--max-tokens <N>")]
     [DefaultValue(512)]
     [Description("Maximum completion tokens (high enough to allow a thinking phase).")]
-    public int MaxTokens { get; init; } = 512;
-
-    public string ResolvedPrompt() => ResolveAtValue(Prompt);
+    public override int MaxTokens { get; init; } = 512;
 }
 
-public sealed class StructuredSettings : EndpointSettings
+public sealed class StructuredSettings : PromptSettings
 {
-    [CommandOption("-m|--model <MODEL>")]
-    [DefaultValue("default")]
-    [Description("Model identifier (use 'llmprobe models <endpoint>' to list).")]
-    public string Model { get; init; } = "default";
-
     [CommandOption("-p|--prompt <PROMPT>")]
     [DefaultValue("Extract a person from: 'Alice is 30 years old.' Respond only with the JSON object.")]
     [Description("Prompt that should populate the {name, age} schema. Use @file.txt or @- for stdin.")]
-    public string Prompt { get; init; } = "Extract a person from: 'Alice is 30 years old.' Respond only with the JSON object.";
+    public override string Prompt { get; init; } = "Extract a person from: 'Alice is 30 years old.' Respond only with the JSON object.";
 
     [CommandOption("--max-tokens <N>")]
     [DefaultValue(128)]
     [Description("Maximum completion tokens.")]
-    public int MaxTokens { get; init; } = 128;
-
-    public string ResolvedPrompt() => ResolveAtValue(Prompt);
+    public override int MaxTokens { get; init; } = 128;
 }
 
 public sealed class ReasoningCommand : AsyncCommand<ReasoningSettings>
