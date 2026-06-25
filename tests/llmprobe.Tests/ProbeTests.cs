@@ -458,3 +458,254 @@ public class InputExpansionTests
         finally { File.Delete(path); }
     }
 }
+
+public class SupportDetectionTests
+{
+    [Theory]
+    [InlineData(400)]
+    [InlineData(404)]
+    [InlineData(405)]
+    [InlineData(501)]
+    public void IsUnsupportedStatus_TreatsMissingRoutesAsUnsupported(int status)
+    {
+        Assert.True(Probe.IsUnsupportedStatus(status));
+    }
+
+    [Theory]
+    [InlineData(401)]
+    [InlineData(403)]
+    [InlineData(429)]
+    [InlineData(500)]
+    [InlineData(503)]
+    public void IsUnsupportedStatus_TreatsAuthAndServerErrorsAsSupportedButFailing(int status)
+    {
+        // 401/403/5xx mean the route exists but the request failed — not "unsupported".
+        Assert.False(Probe.IsUnsupportedStatus(status));
+    }
+}
+
+public class CompletionsTests
+{
+    [Fact]
+    public void CompletionsResult_HasStableFieldNames()
+    {
+        var result = new CompletionsResult("http://infer:8080", "gpt-3.5-turbo-instruct", true, true,
+            200, 42, 6, 3, 9, "stop", "Paris", null, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.CompletionsResult);
+
+        Assert.Contains("\"supported\"", json);
+        Assert.Contains("\"text_preview\"", json);
+        Assert.Contains("\"finish_reason\"", json);
+        Assert.Contains("\"total_tokens\"", json);
+        Assert.DoesNotContain("\"TextPreview\"", json);
+    }
+
+    [Fact]
+    public void OpenAiCompletionsResponse_ParsesTextFromChoices()
+    {
+        const string raw = """
+        {
+          "choices": [{ "text": " Paris.", "finish_reason": "stop" }],
+          "usage": { "prompt_tokens": 6, "completion_tokens": 3, "total_tokens": 9 }
+        }
+        """;
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiCompletionsResponse);
+        Assert.Equal(" Paris.", resp!.Choices![0].Text);
+        Assert.Equal("stop", resp.Choices[0].FinishReason);
+        Assert.Equal(9, resp.Usage!.TotalTokens);
+    }
+}
+
+public class InfillTests
+{
+    [Fact]
+    public void InfillResult_HasStableFieldNames()
+    {
+        var result = new InfillResult("http://infer:8080", "qwen2.5-coder", true, true,
+            200, 55, 10, 8, 18, "a + b", null, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.InfillResult);
+
+        Assert.Contains("\"content_preview\"", json);
+        Assert.Contains("\"supported\"", json);
+        Assert.DoesNotContain("\"ContentPreview\"", json);
+    }
+
+    [Fact]
+    public void LlamaInfillResponse_ParsesContentAndTokenCounts()
+    {
+        const string raw = """
+        { "content": "a + b", "tokens_evaluated": 10, "tokens_predicted": 8 }
+        """;
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.LlamaInfillResponse);
+        Assert.Equal("a + b", resp!.Content);
+        Assert.Equal(10, resp.TokensEvaluated);
+        Assert.Equal(8, resp.TokensPredicted);
+    }
+
+    [Fact]
+    public void LlamaInfillRequest_SerializesFimFieldNames()
+    {
+        var req = new LlamaInfillRequest("pre", "suf", Model: "m", NPredict: 64, Temperature: 0);
+        var json = System.Text.Json.JsonSerializer.Serialize(req, JsonContext.Default.LlamaInfillRequest);
+        Assert.Contains("\"input_prefix\"", json);
+        Assert.Contains("\"input_suffix\"", json);
+        Assert.Contains("\"n_predict\"", json);
+    }
+}
+
+public class TokenizeTests
+{
+    [Fact]
+    public void TokenizeResult_HasStableFieldNames()
+    {
+        var result = new TokenizeResult("http://infer:8080", "gpt-4o", true, true,
+            200, 12, 9, new[] { 1, 2, 3 }, null, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.TokenizeResult);
+
+        Assert.Contains("\"token_count\"", json);
+        Assert.Contains("\"first_tokens\"", json);
+        Assert.DoesNotContain("\"TokenCount\"", json);
+    }
+
+    [Fact]
+    public void OpenAiTokenizeResponse_ParsesCountAndTokens_VllmForm()
+    {
+        const string raw = """{ "count": 4, "tokens": [9906, 1917, 0, 1] }""";
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiTokenizeResponse);
+        Assert.Equal(4, resp!.Count);
+        Assert.Equal(new[] { 9906, 1917, 0, 1 }, resp.Tokens);
+    }
+
+    [Fact]
+    public void OpenAiTokenizeResponse_ParsesTokensOnly_LlamaCppForm()
+    {
+        // llama.cpp returns { tokens:[...] } with no count; callers fall back to length.
+        const string raw = """{ "tokens": [1, 2, 3] }""";
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiTokenizeResponse);
+        Assert.Null(resp!.Count);
+        Assert.Equal(3, resp.Tokens!.Length);
+    }
+}
+
+public class LogprobsParsingTests
+{
+    [Fact]
+    public void LogprobsResult_HasStableFieldNames()
+    {
+        var result = new LogprobsResult("http://infer:8080", "gpt-4o", true, true,
+            200, 88, 1,
+            new[] { new LogprobItem("ok", -0.01, new[] { new LogprobAlternative("OK", -3.2) }) },
+            "stop", 10, 1, 11, null, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.LogprobsResult);
+
+        Assert.Contains("\"sampled_tokens\"", json);
+        Assert.Contains("\"top_alternatives\"", json);
+        Assert.Contains("\"logprob\"", json);
+        Assert.DoesNotContain("\"SampledTokens\"", json);
+    }
+
+    [Fact]
+    public void OpenAiLogprobsResponse_ParsesContentAndTopLogprobs()
+    {
+        const string raw = """
+        {
+          "choices": [{
+            "message": { "role": "assistant", "content": "ok" },
+            "logprobs": { "content": [
+              { "token": "ok", "logprob": -0.01,
+                "top_logprobs": [ { "token": "ok", "logprob": -0.01 }, { "token": "OK", "logprob": -3.2 } ] }
+            ] },
+            "finish_reason": "stop"
+          }],
+          "usage": { "prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11 }
+        }
+        """;
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiLogprobsResponse);
+        var content = resp!.Choices![0].Logprobs!.Content!;
+        Assert.Single(content);
+        Assert.Equal("ok", content[0].Token);
+        Assert.Equal(-0.01, content[0].Logprob, 5);
+        Assert.Equal(2, content[0].TopLogprobs!.Length);
+        Assert.Equal("OK", content[0].TopLogprobs![1].Token);
+    }
+
+    [Fact]
+    public void OpenAiLogprobsResponse_HandlesMissingLogprobsAsNotReturned()
+    {
+        const string raw = """
+        { "choices": [{ "message": { "role": "assistant", "content": "ok" }, "finish_reason": "stop" }] }
+        """;
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiLogprobsResponse);
+        Assert.Null(resp!.Choices![0].Logprobs);
+    }
+}
+
+public class ClassifyTests
+{
+    [Fact]
+    public void ClassifyResult_HasStableFieldNames()
+    {
+        var result = new ClassifyResult("http://infer:8080", "bert-classifier", true, true,
+            200, 33, "classify", new[] { new ClassifyLabel("POSITIVE", 0.98) }, null, null, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.ClassifyResult);
+
+        Assert.Contains("\"labels\"", json);
+        Assert.Contains("\"probability\"", json);
+        Assert.Contains("\"mode\"", json);
+        Assert.DoesNotContain("\"Labels\"", json);
+    }
+
+    [Fact]
+    public void OpenAiClassifyResponse_ParsesLabelAndProbs()
+    {
+        const string raw = """
+        { "data": [ { "label": "POSITIVE", "probs": [0.02, 0.98], "label_names": ["NEGATIVE", "POSITIVE"] } ] }
+        """;
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiClassifyResponse);
+        Assert.Equal("POSITIVE", resp!.Data![0].Label);
+        Assert.Equal(new[] { 0.02, 0.98 }, resp.Data[0].Probs);
+    }
+
+    [Fact]
+    public void OpenAiScoreResponse_ParsesScore()
+    {
+        const string raw = """{ "data": [ { "score": 0.873 } ] }""";
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiScoreResponse);
+        Assert.Equal(0.873, resp!.Data![0].Score, 5);
+    }
+
+    [Fact]
+    public void BuildLabels_PairsNamesWithProbsOrderedByProbability()
+    {
+        var data = new OpenAiClassifyData("POSITIVE", new[] { 0.02, 0.98 }, new[] { "NEGATIVE", "POSITIVE" });
+        var labels = Probe.BuildLabels(data);
+        Assert.Equal(2, labels.Length);
+        Assert.Equal("POSITIVE", labels[0].Label);
+        Assert.Equal(0.98, labels[0].Probability, 5);
+        Assert.Equal("NEGATIVE", labels[1].Label);
+    }
+
+    [Fact]
+    public void BuildLabels_SynthesizesLabelNamesWhenAbsent()
+    {
+        var data = new OpenAiClassifyData(null, new[] { 0.3, 0.7 }, null);
+        var labels = Probe.BuildLabels(data);
+        Assert.Equal("LABEL_1", labels[0].Label);
+        Assert.Equal(0.7, labels[0].Probability, 5);
+    }
+
+    [Fact]
+    public void BuildLabels_FallsBackToSingleLabelWhenNoProbs()
+    {
+        var data = new OpenAiClassifyData("spam", null, null);
+        var labels = Probe.BuildLabels(data);
+        Assert.Single(labels);
+        Assert.Equal("spam", labels[0].Label);
+    }
+
+    [Fact]
+    public void BuildLabels_ReturnsEmptyForNullData()
+    {
+        Assert.Empty(Probe.BuildLabels(null));
+    }
+}

@@ -21,13 +21,20 @@ llmprobe vision http://infer:8000 -i ./cat.png # probe image (multimodal) input 
 llmprobe tools http://infer:8000               # probe function/tool calling support
 llmprobe reasoning http://infer:8000           # probe thinking/reasoning model behavior
 llmprobe structured http://infer:8000          # probe JSON-schema structured output
+llmprobe completions http://infer:8000         # legacy text completion (/v1/completions)
+llmprobe infill http://infer:8000 --prefix a --suffix b # fill-in-the-middle (llama.cpp /infill)
+llmprobe tokenize http://infer:8000 -i "hello" # count tokens (/tokenize)
+llmprobe logprobs http://infer:8000            # probe token logprobs + top alternatives
+llmprobe classify http://infer:8000 -i "great!" # sequence classification / scoring (vLLM)
 llmprobe capabilities http://infer:8000        # detect features (streaming, JSON, vision)
 llmprobe help-ai                               # guidance for AI agents using this tool
 ```
 
 Works against any OpenAI-compatible endpoint: **vLLM**, **llama.cpp** (`llama-server`), **Ollama**, **OpenAI**, **Anthropic** (via gateways), **OpenRouter**, **Mistral**, custom RAG-gateways.
 
-Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`vision`/`tools`/`reasoning`/`structured`/`capabilities` → `/v1/chat/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`.
+Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`vision`/`tools`/`reasoning`/`structured`/`logprobs`/`capabilities` → `/v1/chat/completions`; `completions` → `/v1/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`; `tokenize` → `/tokenize`; `infill` → `/infill` (llama.cpp); `classify` → `/classify` (or `/score` with `--score`, vLLM).
+
+The `completions`, `infill`, `tokenize`, `logprobs` and `classify` commands are **support probes**: when an endpoint lacks the route (404/400/405/501) or returns no logprobs, they report `supported: false` and exit `0` — that's a clean "not supported by this endpoint", not a failure. Only a transport/connection error exits `74`.
 
 ## Why this exists (the agent angle)
 
@@ -175,6 +182,84 @@ as JSON and conforms (required fields present, types match). A successful HTTP c
 that returns non-JSON or a schema mismatch still exits `0` — it reports
 `parsed json: no` / `schema conform: no` with the violations, distinguishing
 "endpoint doesn't support structured output" from a transport failure.
+
+### Legacy text completion
+
+```sh
+$ llmprobe completions http://infer:8000 -m gpt-3.5-turbo-instruct -p "The capital of France is"
+✓ completions gpt-3.5-turbo-instruct @ http://infer:8000
+latency    120 ms
+supported  yes
+finish     stop
+tokens     prompt=6 completion=3 total=9
+text        Paris.
+```
+
+Hits `/v1/completions` (not chat) and reads `choices[0].text`. If the endpoint
+only serves the chat API, `supported` is `no` and it exits `0`.
+
+### Fill-in-the-middle (infill)
+
+```sh
+$ llmprobe infill http://infer:8000 --prefix "def add(a, b):\n    return " --suffix "\n\nprint(add(2, 3))"
+✓ infill default @ http://infer:8000
+latency    210 ms
+supported  yes
+tokens     prompt=12 completion=4 total=16
+infilled   a + b
+```
+
+llama.cpp-specific (`/infill`). `--prefix` / `--suffix` accept `@file` / `@-`.
+On a non-llama.cpp endpoint, `supported` is `no` ("not supported (llama.cpp /infill only)").
+
+### Tokenize (token count)
+
+```sh
+$ llmprobe tokenize http://infer:8000 -m gpt-4o -i "hello world"
+✓ tokenize gpt-4o @ http://infer:8000
+latency      8 ms
+supported    yes
+token count  2
+first tokens [15339, 1917]
+```
+
+Prefers the OpenAI/vLLM form (`{model, prompt}` → `{count, tokens}`) and falls
+back to the llama.cpp form (`{content}` → `{tokens:[...]}`).
+
+### Probe token logprobs
+
+```sh
+$ llmprobe logprobs http://infer:8000 -m gpt-4o
+✓ logprobs gpt-4o @ http://infer:8000
+latency     90 ms
+supported   yes
+sampled     1
+ok (-0.01)  ok (-0.01), OK (-3.21)
+tokens      prompt=10 completion=1 total=11
+finish      stop
+```
+
+Sends `logprobs: true, top_logprobs: 5` and reports, per generated token, the
+chosen token + its logprob and the top alternatives. If the endpoint accepts the
+request but returns no logprobs, `supported` is `no` (exit `0`).
+
+### Classify / score (vLLM)
+
+```sh
+# Sequence classification (/classify)
+$ llmprobe classify http://infer:8000 -m my-classifier -i "I loved this movie!"
+✓ classify my-classifier @ http://infer:8000
+latency    40 ms
+supported  yes
+POSITIVE   0.9812
+NEGATIVE   0.0188
+
+# Text-pair similarity scoring (/score) via --score
+llmprobe classify http://infer:8000 -m my-reranker -i "what is the capital?" --score "Copenhagen is the capital"
+```
+
+On a non-classifier endpoint, `supported` is `no`
+("not supported (vLLM classifier/score models only)").
 
 ### Compose with shell
 

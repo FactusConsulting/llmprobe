@@ -61,6 +61,27 @@ app.Configure(config =>
         .WithDescription("Probe structured output: request a json_schema response and validate schema adherence.")
         .WithExample("structured", "https://infer:8000", "-m", "<model>")
         .WithExample("structured", "https://infer:8000", "--json");
+    config.AddCommand<CompletionsCommand>("completions")
+        .WithDescription("Legacy text completion via /v1/completions; report finish reason, tokens, text.")
+        .WithExample("completions", "https://infer:8000", "-m", "<model>", "-p", "The capital of France is")
+        .WithExample("completions", "https://infer:8000", "-p", "@prompt.txt", "--json");
+    config.AddCommand<InfillCommand>("infill")
+        .WithDescription("Fill-in-the-middle via llama.cpp /infill; report the infilled content.")
+        .WithExample("infill", "https://infer:8000", "--prefix", "def add(a, b):\n    return ", "--suffix", "\nprint(add(2,3))")
+        .WithExample("infill", "https://infer:8000", "--prefix", "@head.py", "--suffix", "@tail.py", "--json");
+    config.AddCommand<TokenizeCommand>("tokenize")
+        .WithDescription("Count tokens via /tokenize (OpenAI/vLLM or llama.cpp form).")
+        .WithExample("tokenize", "https://infer:8000", "-m", "<model>", "-i", "hello world")
+        .WithExample("tokenize", "https://infer:8000", "-i", "@doc.txt", "--json");
+    config.AddCommand<LogprobsCommand>("logprobs")
+        .WithDescription("Probe token logprobs: report chosen tokens, their logprob, and top alternatives.")
+        .WithExample("logprobs", "https://infer:8000", "-m", "<model>")
+        .WithExample("logprobs", "https://infer:8000", "-p", "Reply with: ok.", "--json");
+    config.AddCommand<ClassifyCommand>("classify")
+        .WithDescription("Sequence classification via /classify, or text-pair scoring via /score (vLLM).")
+        .WithExample("classify", "https://infer:8000", "-m", "<classifier-model>", "-i", "I loved this movie!")
+        .WithExample("classify", "https://infer:8000", "-m", "<reranker-model>", "-i", "what is the capital?", "--score", "Copenhagen is the capital")
+        .WithExample("classify", "https://infer:8000", "-i", "@review.txt", "--json");
     config.AddCommand<CapabilitiesCommand>("capabilities")
         .WithAlias("caps")
         .WithDescription("Detect features the endpoint supports (streaming, json mode, logprobs, ...).")

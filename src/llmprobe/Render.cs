@@ -201,6 +201,105 @@ public static class Render
         }
     }
 
+    public static void Completions(CompletionsResult r)
+    {
+        if (ShortCircuit(r.Ok, () => JsonSerializer.Serialize(r, JsonContext.Default.CompletionsResult))) return;
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} completions [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = KvTable();
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
+        if (r.Error == null) t.AddRow("supported", r.Supported ? IconYes : "[grey]no[/]");
+        if (r.Supported && r.Error == null)
+        {
+            if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
+            t.AddRow(KeyTokens, TokenRow(r.PromptTokens, r.CompletionTokens, r.TotalTokens));
+            if (r.TextPreview != null) t.AddRow("text", $"[italic]{Markup.Escape(r.TextPreview)}[/]");
+        }
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+        if (r.Note != null && r.Error == null) AnsiConsole.MarkupLine($"[grey]note:[/]  {Markup.Escape(r.Note)}");
+    }
+
+    public static void Infill(InfillResult r)
+    {
+        if (ShortCircuit(r.Ok, () => JsonSerializer.Serialize(r, JsonContext.Default.InfillResult))) return;
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} infill [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = KvTable();
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
+        if (r.Error == null) t.AddRow("supported", r.Supported ? IconYes : "[grey]no[/]");
+        if (r.Supported && r.Error == null)
+        {
+            t.AddRow(KeyTokens, TokenRow(r.PromptTokens, r.CompletionTokens, r.TotalTokens));
+            if (r.ContentPreview != null) t.AddRow("infilled", $"[italic]{Markup.Escape(r.ContentPreview)}[/]");
+        }
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+        if (r.Note != null && r.Error == null) AnsiConsole.MarkupLine($"[grey]note:[/]  {Markup.Escape(r.Note)}");
+    }
+
+    public static void Tokenize(TokenizeResult r)
+    {
+        if (ShortCircuit(r.Ok, () => JsonSerializer.Serialize(r, JsonContext.Default.TokenizeResult))) return;
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} tokenize [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = KvTable();
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
+        if (r.Error == null) t.AddRow("supported", r.Supported ? IconYes : "[grey]no[/]");
+        if (r.Supported && r.Error == null)
+        {
+            t.AddRow("token count", $"[yellow]{r.TokenCount}[/]");
+            if (r.FirstTokens.Length > 0)
+                t.AddRow("first tokens", Markup.Escape("[" + string.Join(", ", r.FirstTokens) + (r.TokenCount > r.FirstTokens.Length ? ", …" : "") + "]"));
+        }
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+        if (r.Note != null && r.Error == null) AnsiConsole.MarkupLine($"[grey]note:[/]  {Markup.Escape(r.Note)}");
+    }
+
+    public static void Logprobs(LogprobsResult r)
+    {
+        if (ShortCircuit(r.Ok, () => JsonSerializer.Serialize(r, JsonContext.Default.LogprobsResult))) return;
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} logprobs [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = KvTable();
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
+        if (r.Error == null) t.AddRow("supported", r.Supported ? IconYes : "[grey]no[/]");
+        if (r.Supported && r.Error == null)
+        {
+            t.AddRow("sampled", r.SampledTokens.ToString());
+            foreach (var tok in r.Tokens)
+            {
+                var alts = string.Join(", ", tok.TopAlternatives.Select(a => $"{Markup.Escape(a.Token)} ({a.Logprob:F2})"));
+                t.AddRow($"[yellow]{Markup.Escape(tok.Token)}[/] [grey]({tok.Logprob:F2})[/]", alts.Length > 0 ? alts : "—");
+            }
+            t.AddRow(KeyTokens, TokenRow(r.PromptTokens, r.CompletionTokens, r.TotalTokens));
+        }
+        if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+        if (r.Note != null && r.Error == null) AnsiConsole.MarkupLine($"[grey]note:[/]  {Markup.Escape(r.Note)}");
+    }
+
+    public static void Classify(ClassifyResult r)
+    {
+        if (ShortCircuit(r.Ok, () => JsonSerializer.Serialize(r, JsonContext.Default.ClassifyResult))) return;
+        var status = r.Ok ? IconOk : IconFail;
+        AnsiConsole.MarkupLine($"{status} {r.Mode} [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
+        var t = KvTable();
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
+        if (r.Error == null) t.AddRow("supported", r.Supported ? IconYes : "[grey]no[/]");
+        if (r.Supported && r.Error == null)
+        {
+            if (r.Score != null) t.AddRow("score", $"[yellow]{r.Score:F4}[/]");
+            foreach (var l in r.Labels)
+                t.AddRow(Markup.Escape(l.Label), $"[yellow]{l.Probability:F4}[/]");
+        }
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+        if (r.Note != null && r.Error == null) AnsiConsole.MarkupLine($"[grey]note:[/]  {Markup.Escape(r.Note)}");
+    }
+
     public static void Error(string error, string? hint = null)
     {
         if (Format == OutputFormat.Json)
