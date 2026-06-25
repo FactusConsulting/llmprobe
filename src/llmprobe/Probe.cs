@@ -88,22 +88,21 @@ public static class Probe
         return new ModelList(e, names.Length, names, sw.ElapsedMilliseconds);
     }
 
-    // Shared skeleton for the POST /v1/chat/completions probes (chat, reasoning,
-    // structured, vision, tools). Handles Normalize + timing + request build +
-    // send + read + status/exception handling, leaving each caller to map the
-    // raw response body into its own result shape. The three delegates receive
-    // the same data the inline implementations used to:
+    // Shared skeleton for every "POST JSON to one URL and map the response" probe.
+    // Handles timing + request build + send + read + status/exception handling,
+    // leaving each caller to map the raw response body into its own result shape.
+    // The three delegates receive the same data the inline implementations used to:
     //   onError(status, elapsedMs, rawBody)   — non-2xx response
     //   onOk(status, elapsedMs, rawBody)       — 2xx response
     //   onException(elapsedMs, message)        — transport/cancellation failure
-    private static async Task<TResult> PostChatAsync<TResult>(
-        HttpClient http, string endpoint, string requestJson, CancellationToken ct,
+    private static async Task<TResult> PostJsonAsync<TResult>(
+        HttpClient http, string url, string requestJson, CancellationToken ct,
         Func<int, long, string, TResult> onError,
         Func<int, long, string, TResult> onOk,
         Func<long, string, TResult> onException)
     {
         var sw = Stopwatch.StartNew();
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{Normalize(endpoint)}/v1/chat/completions")
+        var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(requestJson, Encoding.UTF8, "application/json"),
         };
@@ -123,6 +122,17 @@ public static class Probe
             return onException(sw.ElapsedMilliseconds, ex.Message);
         }
     }
+
+    // Thin specialization of PostJsonAsync for the chat/completions probes
+    // (chat, reasoning, structured, vision, tools), which all target the same
+    // OpenAI /v1/chat/completions route off a bare endpoint.
+    private static Task<TResult> PostChatAsync<TResult>(
+        HttpClient http, string endpoint, string requestJson, CancellationToken ct,
+        Func<int, long, string, TResult> onError,
+        Func<int, long, string, TResult> onOk,
+        Func<long, string, TResult> onException) =>
+        PostJsonAsync(http, $"{Normalize(endpoint)}/v1/chat/completions", requestJson, ct,
+            onError, onOk, onException);
 
     public static Task<TestResult> ChatTestAsync(
         HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
@@ -636,134 +646,101 @@ public static class Probe
         status == 404 || status == 405 || status == 501 || status == 400;
 
     // --- completions: legacy text completion (POST /v1/completions) ---
-    public static async Task<CompletionsResult> CompletionsAsync(
+    public static Task<CompletionsResult> CompletionsAsync(
         HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new OpenAiCompletionsRequest(model, prompt, MaxTokens: maxTokens, Temperature: 0);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiCompletionsRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/completions")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            var status = (int)res.StatusCode;
-            if (!res.IsSuccessStatusCode)
+        return PostJsonAsync(http, $"{e}/v1/completions", json, ct,
+            // A reachable endpoint that lacks the route is "not supported" — a clean
+            // result (Ok=true so exit 0). Any other non-2xx (auth/5xx) is a genuine
+            // error: Ok=false (exit 74) with the response body surfaced.
+            onError: (status, ms, raw) =>
             {
-                // A reachable endpoint that lacks the route is "not supported" — a clean
-                // result (Ok=true so exit 0). Any other non-2xx (auth/5xx) is a genuine
-                // error: Ok=false (exit 74) with the response body surfaced.
                 var unsupported = IsUnsupportedStatus(status);
-                return new CompletionsResult(e, model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
+                return new CompletionsResult(e, model, unsupported, !unsupported, status, ms,
                     0, 0, 0, null, null,
                     unsupported ? "not supported by this endpoint (no /v1/completions route)" : null,
                     unsupported ? null : Trunc(raw, 200));
-            }
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiCompletionsResponse);
-            var choice = resp?.Choices?.FirstOrDefault();
-            return new CompletionsResult(e, model, true, true, status, sw.ElapsedMilliseconds,
-                resp?.Usage?.PromptTokens ?? 0,
-                resp?.Usage?.CompletionTokens ?? 0,
-                resp?.Usage?.TotalTokens ?? 0,
-                choice?.FinishReason,
-                Trunc(choice?.Text ?? "", 160),
-                null, null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new CompletionsResult(e, model, false, true, null, sw.ElapsedMilliseconds, 0, 0, 0, null, null, null, ex.Message);
-        }
+            },
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiCompletionsResponse);
+                var choice = resp?.Choices?.FirstOrDefault();
+                return new CompletionsResult(e, model, true, true, status, ms,
+                    resp?.Usage?.PromptTokens ?? 0,
+                    resp?.Usage?.CompletionTokens ?? 0,
+                    resp?.Usage?.TotalTokens ?? 0,
+                    choice?.FinishReason,
+                    Trunc(choice?.Text ?? "", 160),
+                    null, null);
+            },
+            onException: (ms, msg) =>
+                new CompletionsResult(e, model, false, true, null, ms, 0, 0, 0, null, null, null, msg));
     }
 
     // --- infill: llama.cpp fill-in-the-middle (POST /infill) ---
-    public static async Task<InfillResult> InfillAsync(
+    public static Task<InfillResult> InfillAsync(
         HttpClient http, string endpoint, string model, string prefix, string suffix, int maxTokens, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new LlamaInfillRequest(prefix, suffix,
             Model: string.IsNullOrEmpty(model) ? null : model, NPredict: maxTokens, Temperature: 0);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.LlamaInfillRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/infill")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            var status = (int)res.StatusCode;
-            if (!res.IsSuccessStatusCode)
+        return PostJsonAsync(http, $"{e}/infill", json, ct,
+            onError: (status, ms, raw) =>
             {
                 var unsupported = IsUnsupportedStatus(status);
-                return new InfillResult(e, model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
+                return new InfillResult(e, model, unsupported, !unsupported, status, ms,
                     0, 0, 0, null,
                     unsupported ? "not supported (llama.cpp /infill only)" : null,
                     unsupported ? null : Trunc(raw, 200));
-            }
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.LlamaInfillResponse);
-            return new InfillResult(e, model, true, true, status, sw.ElapsedMilliseconds,
-                resp?.TokensEvaluated ?? 0,
-                resp?.TokensPredicted ?? 0,
-                (resp?.TokensEvaluated ?? 0) + (resp?.TokensPredicted ?? 0),
-                Trunc(resp?.Content ?? "", 160),
-                null, null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new InfillResult(e, model, false, true, null, sw.ElapsedMilliseconds, 0, 0, 0, null, null, ex.Message);
-        }
+            },
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.LlamaInfillResponse);
+                return new InfillResult(e, model, true, true, status, ms,
+                    resp?.TokensEvaluated ?? 0,
+                    resp?.TokensPredicted ?? 0,
+                    (resp?.TokensEvaluated ?? 0) + (resp?.TokensPredicted ?? 0),
+                    Trunc(resp?.Content ?? "", 160),
+                    null, null);
+            },
+            onException: (ms, msg) =>
+                new InfillResult(e, model, false, true, null, ms, 0, 0, 0, null, null, msg));
     }
 
     // --- tokenize: token count (POST /tokenize) ---
     // Prefer the OpenAI/vLLM form { model, prompt } -> { count, tokens }; if the
     // server returns the llama.cpp shape ({ tokens:[...] } with no count), use that.
-    public static async Task<TokenizeResult> TokenizeAsync(
+    public static Task<TokenizeResult> TokenizeAsync(
         HttpClient http, string endpoint, string model, string input, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new OpenAiTokenizeRequest(model, input);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiTokenizeRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/tokenize")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            var status = (int)res.StatusCode;
-            if (!res.IsSuccessStatusCode)
+        return PostJsonAsync(http, $"{e}/tokenize", json, ct,
+            onError: (status, ms, raw) =>
             {
                 var unsupported = IsUnsupportedStatus(status);
-                return new TokenizeResult(e, model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
+                return new TokenizeResult(e, model, unsupported, !unsupported, status, ms,
                     0, Array.Empty<int>(),
                     unsupported ? "not supported by this endpoint (no /tokenize route)" : null,
                     unsupported ? null : Trunc(raw, 200));
-            }
-            // Both response shapes carry a "tokens" array; the OpenAI/vLLM form adds a
-            // "count". Parse the richer shape first and fall back to the token array.
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiTokenizeResponse);
-            var tokens = resp?.Tokens ?? Array.Empty<int>();
-            var count = resp?.Count ?? tokens.Length;
-            return new TokenizeResult(e, model, true, true, status, sw.ElapsedMilliseconds,
-                count, tokens.Take(10).ToArray(), null, null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new TokenizeResult(e, model, false, true, null, sw.ElapsedMilliseconds, 0, Array.Empty<int>(), null, ex.Message);
-        }
+            },
+            onOk: (status, ms, raw) =>
+            {
+                // Both response shapes carry a "tokens" array; the OpenAI/vLLM form adds a
+                // "count". Parse the richer shape first and fall back to the token array.
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiTokenizeResponse);
+                var tokens = resp?.Tokens ?? Array.Empty<int>();
+                var count = resp?.Count ?? tokens.Length;
+                return new TokenizeResult(e, model, true, true, status, ms,
+                    count, tokens.Take(10).ToArray(), null, null);
+            },
+            onException: (ms, msg) =>
+                new TokenizeResult(e, model, false, true, null, ms, 0, Array.Empty<int>(), null, msg));
     }
 
     // --- logprobs: functional logprobs probe (POST /v1/chat/completions) ---
@@ -811,82 +788,58 @@ public static class Probe
     }
 
     // --- classify: sequence classification (POST /classify) ---
-    public static async Task<ClassifyResult> ClassifyAsync(
+    public static Task<ClassifyResult> ClassifyAsync(
         HttpClient http, string endpoint, string model, string input, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new OpenAiClassifyRequest(model, input);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiClassifyRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/classify")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            var status = (int)res.StatusCode;
-            if (!res.IsSuccessStatusCode)
+        return PostJsonAsync(http, $"{e}/classify", json, ct,
+            onError: (status, ms, raw) =>
+                ClassifyError(e, model, "classify", status, ms, raw),
+            onOk: (status, ms, raw) =>
             {
-                var unsupported = IsUnsupportedStatus(status);
-                return new ClassifyResult(e, model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
-                    "classify", Array.Empty<ClassifyLabel>(), null,
-                    unsupported ? "not supported (vLLM classifier/score models only)" : null,
-                    unsupported ? null : Trunc(raw, 200));
-            }
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiClassifyResponse);
-            var first = resp?.Data?.FirstOrDefault();
-            var labels = BuildLabels(first);
-            return new ClassifyResult(e, model, true, true, status, sw.ElapsedMilliseconds,
-                "classify", labels, null, null, null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new ClassifyResult(e, model, false, true, null, sw.ElapsedMilliseconds,
-                "classify", Array.Empty<ClassifyLabel>(), null, null, ex.Message);
-        }
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiClassifyResponse);
+                var labels = BuildLabels(resp?.Data?.FirstOrDefault());
+                return new ClassifyResult(e, model, true, true, status, ms,
+                    "classify", labels, null, null, null);
+            },
+            onException: (ms, msg) =>
+                new ClassifyResult(e, model, false, true, null, ms,
+                    "classify", Array.Empty<ClassifyLabel>(), null, null, msg));
     }
 
     // --- score: cross-encoder similarity of a text pair (POST /score) ---
-    public static async Task<ClassifyResult> ScoreAsync(
+    public static Task<ClassifyResult> ScoreAsync(
         HttpClient http, string endpoint, string model, string text1, string text2, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new OpenAiScoreRequest(model, text1, text2);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiScoreRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/score")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            var status = (int)res.StatusCode;
-            if (!res.IsSuccessStatusCode)
+        return PostJsonAsync(http, $"{e}/score", json, ct,
+            onError: (status, ms, raw) =>
+                ClassifyError(e, model, "score", status, ms, raw),
+            onOk: (status, ms, raw) =>
             {
-                var unsupported = IsUnsupportedStatus(status);
-                return new ClassifyResult(e, model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
-                    "score", Array.Empty<ClassifyLabel>(), null,
-                    unsupported ? "not supported (vLLM classifier/score models only)" : null,
-                    unsupported ? null : Trunc(raw, 200));
-            }
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiScoreResponse);
-            var score = resp?.Data?.FirstOrDefault()?.Score;
-            return new ClassifyResult(e, model, true, true, status, sw.ElapsedMilliseconds,
-                "score", Array.Empty<ClassifyLabel>(), score, null, null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new ClassifyResult(e, model, false, true, null, sw.ElapsedMilliseconds,
-                "score", Array.Empty<ClassifyLabel>(), null, null, ex.Message);
-        }
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiScoreResponse);
+                var score = resp?.Data?.FirstOrDefault()?.Score;
+                return new ClassifyResult(e, model, true, true, status, ms,
+                    "score", Array.Empty<ClassifyLabel>(), score, null, null);
+            },
+            onException: (ms, msg) =>
+                new ClassifyResult(e, model, false, true, null, ms,
+                    "score", Array.Empty<ClassifyLabel>(), null, null, msg));
+    }
+
+    // classify and score share the same non-2xx mapping: an unsupported route is a
+    // clean "not supported" result (exit 0); anything else surfaces the body as an error.
+    private static ClassifyResult ClassifyError(string endpoint, string model, string mode, int status, long ms, string raw)
+    {
+        var unsupported = IsUnsupportedStatus(status);
+        return new ClassifyResult(endpoint, model, unsupported, !unsupported, status, ms,
+            mode, Array.Empty<ClassifyLabel>(), null,
+            unsupported ? "not supported (vLLM classifier/score models only)" : null,
+            unsupported ? null : Trunc(raw, 200));
     }
 
     // Pair each probability from a /classify result with its label name (using the
