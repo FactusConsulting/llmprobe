@@ -59,41 +59,67 @@ public static class Probe
         return new ModelList(e, names.Length, names, sw.ElapsedMilliseconds);
     }
 
-    public static async Task<TestResult> ChatTestAsync(
-        HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
+    // Shared skeleton for the POST /v1/chat/completions probes (chat, reasoning,
+    // structured, vision, tools). Handles Normalize + timing + request build +
+    // send + read + status/exception handling, leaving each caller to map the
+    // raw response body into its own result shape. The three delegates receive
+    // the same data the inline implementations used to:
+    //   onError(status, elapsedMs, rawBody)   — non-2xx response
+    //   onOk(status, elapsedMs, rawBody)       — 2xx response
+    //   onException(elapsedMs, message)        — transport/cancellation failure
+    private static async Task<TResult> PostChatAsync<TResult>(
+        HttpClient http, string endpoint, string requestJson, CancellationToken ct,
+        Func<int, long, string, TResult> onError,
+        Func<int, long, string, TResult> onOk,
+        Func<long, string, TResult> onException)
     {
-        var e = Normalize(endpoint);
         var sw = Stopwatch.StartNew();
-        var body = new OpenAiChatRequest(model,
-            new[] { new OpenAiMessage("user", prompt) }, MaxTokens: maxTokens, Temperature: 0);
-        var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiChatRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{Normalize(endpoint)}/v1/chat/completions")
         {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+            Content = new StringContent(requestJson, Encoding.UTF8, "application/json"),
         };
         try
         {
             using var res = await http.SendAsync(req, ct);
             sw.Stop();
             var raw = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode)
-                return new TestResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds, 0, 0, 0, null, null, Trunc(raw, 200));
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiChatResponse);
-            var choice = resp?.Choices.FirstOrDefault();
-            var content = choice?.Message?.Content ?? "";
-            return new TestResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                resp?.Usage?.PromptTokens ?? 0,
-                resp?.Usage?.CompletionTokens ?? 0,
-                resp?.Usage?.TotalTokens ?? 0,
-                choice?.FinishReason,
-                Trunc(content, 160),
-                null);
+            var status = (int)res.StatusCode;
+            return res.IsSuccessStatusCode
+                ? onOk(status, sw.ElapsedMilliseconds, raw)
+                : onError(status, sw.ElapsedMilliseconds, raw);
         }
         catch (Exception ex)
         {
             sw.Stop();
-            return new TestResult(e, model, false, null, sw.ElapsedMilliseconds, 0, 0, 0, null, null, ex.Message);
+            return onException(sw.ElapsedMilliseconds, ex.Message);
         }
+    }
+
+    public static Task<TestResult> ChatTestAsync(
+        HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
+    {
+        var e = Normalize(endpoint);
+        var body = new OpenAiChatRequest(model,
+            new[] { new OpenAiMessage("user", prompt) }, MaxTokens: maxTokens, Temperature: 0);
+        var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiChatRequest);
+        return PostChatAsync(http, e, json, ct,
+            onError: (status, ms, raw) =>
+                new TestResult(e, model, false, status, ms, 0, 0, 0, null, null, Trunc(raw, 200)),
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiChatResponse);
+                var choice = resp?.Choices.FirstOrDefault();
+                var content = choice?.Message?.Content ?? "";
+                return new TestResult(e, model, true, status, ms,
+                    resp?.Usage?.PromptTokens ?? 0,
+                    resp?.Usage?.CompletionTokens ?? 0,
+                    resp?.Usage?.TotalTokens ?? 0,
+                    choice?.FinishReason,
+                    Trunc(content, 160),
+                    null);
+            },
+            onException: (ms, msg) =>
+                new TestResult(e, model, false, null, ms, 0, 0, 0, null, null, msg));
     }
 
     public static async Task<StreamResult> StreamTestAsync(
@@ -293,49 +319,39 @@ public static class Probe
         }
     }
 
-    public static async Task<ReasoningResult> ReasoningAsync(
+    public static Task<ReasoningResult> ReasoningAsync(
         HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new OpenAiChatRequest(model,
             new[] { new OpenAiMessage("user", prompt) }, MaxTokens: maxTokens, Temperature: 0);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiChatRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode)
-                return new ReasoningResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                    false, null, 0, 0, 0, null, 0, 0, 0, null, null, Trunc(raw, 200));
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiReasoningResponse);
-            var choice = resp?.Choices.FirstOrDefault();
-            var content = choice?.Message?.Content ?? "";
-            var reasoningContent = choice?.Message?.ReasoningContent;
-            var reasoningTokens = resp?.Usage?.CompletionTokensDetails?.ReasoningTokens ?? 0;
-            var (detected, channel, reasoningText, answer) = DetectReasoning(content, reasoningContent, reasoningTokens);
-            return new ReasoningResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                detected, channel, reasoningTokens,
-                reasoningText.Length, answer.Length,
-                choice?.FinishReason,
-                resp?.Usage?.PromptTokens ?? 0,
-                resp?.Usage?.CompletionTokens ?? 0,
-                resp?.Usage?.TotalTokens ?? 0,
-                Trunc(answer.Trim(), 160),
-                "TTFT split between thinking and answer needs streaming (use 'stream').",
-                null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new ReasoningResult(e, model, false, null, sw.ElapsedMilliseconds,
-                false, null, 0, 0, 0, null, 0, 0, 0, null, null, ex.Message);
-        }
+        return PostChatAsync(http, e, json, ct,
+            onError: (status, ms, raw) =>
+                new ReasoningResult(e, model, false, status, ms,
+                    false, null, 0, 0, 0, null, 0, 0, 0, null, null, Trunc(raw, 200)),
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiReasoningResponse);
+                var choice = resp?.Choices.FirstOrDefault();
+                var content = choice?.Message?.Content ?? "";
+                var reasoningContent = choice?.Message?.ReasoningContent;
+                var reasoningTokens = resp?.Usage?.CompletionTokensDetails?.ReasoningTokens ?? 0;
+                var (detected, channel, reasoningText, answer) = DetectReasoning(content, reasoningContent, reasoningTokens);
+                return new ReasoningResult(e, model, true, status, ms,
+                    detected, channel, reasoningTokens,
+                    reasoningText.Length, answer.Length,
+                    choice?.FinishReason,
+                    resp?.Usage?.PromptTokens ?? 0,
+                    resp?.Usage?.CompletionTokens ?? 0,
+                    resp?.Usage?.TotalTokens ?? 0,
+                    Trunc(answer.Trim(), 160),
+                    "TTFT split between thinking and answer needs streaming (use 'stream').",
+                    null);
+            },
+            onException: (ms, msg) =>
+                new ReasoningResult(e, model, false, null, ms,
+                    false, null, 0, 0, 0, null, 0, 0, 0, null, null, msg));
     }
 
     // Detect reasoning across the channels servers use: a dedicated
@@ -368,11 +384,10 @@ public static class Probe
         return (false, null, "", content);
     }
 
-    public static async Task<StructuredResult> StructuredAsync(
+    public static Task<StructuredResult> StructuredAsync(
         HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var schema = JsonSerializer.Deserialize<JsonElement>("""
             {"type":"object","properties":{"name":{"type":"string"},"age":{"type":"integer"}},"required":["name","age"],"additionalProperties":false}
             """);
@@ -381,41 +396,32 @@ public static class Probe
         var body = new OpenAiStructuredRequest(model,
             new[] { new OpenAiMessage("user", prompt) }, responseFormat, MaxTokens: maxTokens, Temperature: 0);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiStructuredRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode)
-                return new StructuredResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds,
+        return PostChatAsync(http, e, json, ct,
+            onError: (status, ms, raw) =>
+                new StructuredResult(e, model, false, status, ms,
                     false, false, Array.Empty<string>(), null, null, 0, 0, 0,
-                    "endpoint rejected the request (may not support response_format json_schema)", Trunc(raw, 200));
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiChatResponse);
-            var choice = resp?.Choices.FirstOrDefault();
-            var content = choice?.Message?.Content ?? "";
-            var (parsed, conformant, violations, preview) = ValidatePerson(content);
-            string? note = null;
-            if (!parsed)
-                note = "response was not valid JSON (endpoint may not support structured output)";
-            else if (!conformant)
-                note = "returned JSON did not match the requested schema";
-            return new StructuredResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                parsed, conformant, violations, preview, choice?.FinishReason,
-                resp?.Usage?.PromptTokens ?? 0,
-                resp?.Usage?.CompletionTokens ?? 0,
-                resp?.Usage?.TotalTokens ?? 0,
-                note, null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new StructuredResult(e, model, false, null, sw.ElapsedMilliseconds,
-                false, false, Array.Empty<string>(), null, null, 0, 0, 0, null, ex.Message);
-        }
+                    "endpoint rejected the request (may not support response_format json_schema)", Trunc(raw, 200)),
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiChatResponse);
+                var choice = resp?.Choices.FirstOrDefault();
+                var content = choice?.Message?.Content ?? "";
+                var (parsed, conformant, violations, preview) = ValidatePerson(content);
+                string? note = null;
+                if (!parsed)
+                    note = "response was not valid JSON (endpoint may not support structured output)";
+                else if (!conformant)
+                    note = "returned JSON did not match the requested schema";
+                return new StructuredResult(e, model, true, status, ms,
+                    parsed, conformant, violations, preview, choice?.FinishReason,
+                    resp?.Usage?.PromptTokens ?? 0,
+                    resp?.Usage?.CompletionTokens ?? 0,
+                    resp?.Usage?.TotalTokens ?? 0,
+                    note, null);
+            },
+            onException: (ms, msg) =>
+                new StructuredResult(e, model, false, null, ms,
+                    false, false, Array.Empty<string>(), null, null, 0, 0, 0, null, msg));
     }
 
     // Validate a model response against the fixed { name: string, age: integer }
@@ -455,12 +461,11 @@ public static class Probe
         return (true, violations.Count == 0, violations.ToArray(), preview);
     }
 
-    public static async Task<VisionResult> VisionAsync(
+    public static Task<VisionResult> VisionAsync(
         HttpClient http, string endpoint, string model, (string Url, string Source) image,
         string prompt, int maxTokens, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var content = new[]
         {
             new OpenAiContentPart("text", Text: prompt),
@@ -469,41 +474,31 @@ public static class Probe
         var body = new OpenAiVisionRequest(model,
             new[] { new OpenAiVisionMessage("user", content) }, MaxTokens: maxTokens, Temperature: 0);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiVisionRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode)
-                return new VisionResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                    false, image.Source, null, 0, 0, 0, null, Trunc(raw, 200));
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiChatResponse);
-            var choice = resp?.Choices.FirstOrDefault();
-            var text = choice?.Message?.Content ?? "";
-            return new VisionResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                true, image.Source, choice?.FinishReason,
-                resp?.Usage?.PromptTokens ?? 0,
-                resp?.Usage?.CompletionTokens ?? 0,
-                resp?.Usage?.TotalTokens ?? 0,
-                Trunc(text, 160), null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new VisionResult(e, model, false, null, sw.ElapsedMilliseconds,
-                false, image.Source, null, 0, 0, 0, null, ex.Message);
-        }
+        return PostChatAsync(http, e, json, ct,
+            onError: (status, ms, raw) =>
+                new VisionResult(e, model, false, status, ms,
+                    false, image.Source, null, 0, 0, 0, null, Trunc(raw, 200)),
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiChatResponse);
+                var choice = resp?.Choices.FirstOrDefault();
+                var text = choice?.Message?.Content ?? "";
+                return new VisionResult(e, model, true, status, ms,
+                    true, image.Source, choice?.FinishReason,
+                    resp?.Usage?.PromptTokens ?? 0,
+                    resp?.Usage?.CompletionTokens ?? 0,
+                    resp?.Usage?.TotalTokens ?? 0,
+                    Trunc(text, 160), null);
+            },
+            onException: (ms, msg) =>
+                new VisionResult(e, model, false, null, ms,
+                    false, image.Source, null, 0, 0, 0, null, msg));
     }
 
-    public static async Task<ToolsResult> ToolsAsync(
+    public static Task<ToolsResult> ToolsAsync(
         HttpClient http, string endpoint, string model, string prompt, int maxTokens, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var parameters = JsonSerializer.Deserialize<JsonElement>("""
             {"type":"object","properties":{"location":{"type":"string","description":"City name, e.g. Copenhagen"}},"required":["location"]}
             """);
@@ -513,35 +508,26 @@ public static class Probe
             new[] { new OpenAiMessage("user", prompt) },
             new[] { tool }, ToolChoice: "auto", MaxTokens: maxTokens, Temperature: 0);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiToolsRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode)
-                return new ToolsResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                    false, null, null, null, 0, 0, 0, null, Trunc(raw, 200));
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiToolsResponse);
-            var choice = resp?.Choices.FirstOrDefault();
-            var call = choice?.Message?.ToolCalls?.FirstOrDefault();
-            var called = call?.Function != null;
-            return new ToolsResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                called, call?.Function?.Name, call?.Function?.Arguments, choice?.FinishReason,
-                resp?.Usage?.PromptTokens ?? 0,
-                resp?.Usage?.CompletionTokens ?? 0,
-                resp?.Usage?.TotalTokens ?? 0,
-                Trunc(choice?.Message?.Content ?? "", 160), null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new ToolsResult(e, model, false, null, sw.ElapsedMilliseconds,
-                false, null, null, null, 0, 0, 0, null, ex.Message);
-        }
+        return PostChatAsync(http, e, json, ct,
+            onError: (status, ms, raw) =>
+                new ToolsResult(e, model, false, status, ms,
+                    false, null, null, null, 0, 0, 0, null, Trunc(raw, 200)),
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiToolsResponse);
+                var choice = resp?.Choices.FirstOrDefault();
+                var call = choice?.Message?.ToolCalls?.FirstOrDefault();
+                var called = call?.Function != null;
+                return new ToolsResult(e, model, true, status, ms,
+                    called, call?.Function?.Name, call?.Function?.Arguments, choice?.FinishReason,
+                    resp?.Usage?.PromptTokens ?? 0,
+                    resp?.Usage?.CompletionTokens ?? 0,
+                    resp?.Usage?.TotalTokens ?? 0,
+                    Trunc(choice?.Message?.Content ?? "", 160), null);
+            },
+            onException: (ms, msg) =>
+                new ToolsResult(e, model, false, null, ms,
+                    false, null, null, null, 0, 0, 0, null, msg));
     }
 
     // Resolve an --image value into a (url, source-label) pair. An http(s):// value
