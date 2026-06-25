@@ -38,19 +38,6 @@ Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`vision`/`t
 
 The `completions`, `infill`, `tokenize`, `logprobs`, `classify`, `transcribe` and `speak` commands are **support probes**: when an endpoint lacks the route (404/400/405/501) or returns no logprobs, they report `supported: false` and exit `0` — that's a clean "not supported by this endpoint", not a failure. Only a transport/connection error exits `74`.
 
-## Why this exists (the agent angle)
-
-Most CLIs are designed for humans first. This one is designed to be **equally good for AI agents** — which matters more and more as agents become routine consumers of dev tooling. Concretely:
-
-- **`--json`** on every command, with **stable snake_case field names** documented in the help
-- **`--quiet`** mode for silent scripting (just "ok" or "fail" + exit code)
-- **Meaningful exit codes**: `0` success, `74` unreachable, `78` config error
-- **`help-ai`** subcommand with explicit agent guidance (what's safe, what to avoid, common patterns)
-- **Composable**: every command works via pipes (`cat prompt.md | llmprobe stream … -p @-`)
-- **Read by default**: low max_tokens defaults, no destructive operations
-
-For humans, you get rich colored output via Spectre.Console — tables, status indicators, syntax-highlighted markup.
-
 ## Install
 
 ### Homebrew (macOS / Linux)
@@ -95,6 +82,19 @@ dotnet publish src/llmprobe -c Release -o ./publish
 ```
 
 Requires .NET 10 SDK.
+
+## Why this exists (the agent angle)
+
+Most CLIs are designed for humans first. This one is designed to be **equally good for AI agents** — which matters more and more as agents become routine consumers of dev tooling. Concretely:
+
+- **`--json`** on every command, with **stable snake_case field names** documented in the help
+- **`--quiet`** mode for silent scripting (just "ok" or "fail" + exit code)
+- **Meaningful exit codes**: `0` success, `74` unreachable, `78` config error
+- **`help-ai`** subcommand with explicit agent guidance (what's safe, what to avoid, common patterns)
+- **Composable**: every command works via pipes (`cat prompt.md | llmprobe stream … -p @-`)
+- **Read by default**: low max_tokens defaults, no destructive operations
+
+For humans, you get rich colored output via Spectre.Console — tables, status indicators, syntax-highlighted markup.
 
 ## Examples
 
