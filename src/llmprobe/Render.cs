@@ -12,7 +12,11 @@ public static class Render
 
     private const string IconOk = "[green]✓[/]";
     private const string IconFail = "[red]✗[/]";
+    private const string IconYes = "[green]yes[/]";
     private const string ErrorLabel = "[red]error[/]";
+    private const string KeyLatency = "latency";
+    private const string KeyTokens = "tokens";
+    private const string KeyFinish = "finish";
 
     public static void Ping(PingResult r)
     {
@@ -22,7 +26,7 @@ public static class Render
         AnsiConsole.MarkupLine($"{status} [bold]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
         t.AddRow("status", r.StatusCode?.ToString() ?? "—");
-        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
         if (r.ServerHeader != null) t.AddRow("server", Markup.Escape(r.ServerHeader));
         if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
@@ -43,9 +47,9 @@ public static class Render
         var status = r.Ok ? IconOk : IconFail;
         AnsiConsole.MarkupLine($"{status} [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
-        t.AddRow("latency", $"{r.LatencyMs} ms");
-        t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
-        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
+        t.AddRow(KeyTokens, $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
         if (r.ResponsePreview != null) t.AddRow("response", $"[italic]{Markup.Escape(r.ResponsePreview)}[/]");
         if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
@@ -61,9 +65,9 @@ public static class Render
         t.AddRow("TTFT", $"[yellow]{r.TtftMs}[/] ms");
         t.AddRow("total", $"{r.TotalMs} ms");
         t.AddRow("chunks", r.Chunks.ToString());
-        t.AddRow("tokens", $"~{r.OutputTokensApprox}");
+        t.AddRow(KeyTokens, $"~{r.OutputTokensApprox}");
         t.AddRow("throughput", $"[yellow]{r.TokensPerSec:F1}[/] tok/s");
-        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
+        if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
         if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
     }
@@ -96,11 +100,11 @@ public static class Render
         var status = r.Ok ? IconOk : IconFail;
         AnsiConsole.MarkupLine($"{status} embed [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
-        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
         t.AddRow("inputs", r.Inputs.ToString());
         t.AddRow("dimensions", $"[yellow]{r.Dimensions}[/]");
         t.AddRow("norm", $"{r.Norm:F4}");
-        if (r.TotalTokens > 0) t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.TotalTokens > 0) t.AddRow(KeyTokens, $"prompt=[yellow]{r.PromptTokens}[/] total=[yellow]{r.TotalTokens}[/]");
         if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
     }
@@ -130,13 +134,13 @@ public static class Render
         var status = r.Ok ? IconOk : IconFail;
         AnsiConsole.MarkupLine($"{status} reasoning [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
-        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
         t.AddRow("reasoning", r.ReasoningDetected ? "[green]detected[/]" : "[grey]not detected[/]");
         if (r.ReasoningChannel != null) t.AddRow("channel", Markup.Escape(r.ReasoningChannel));
         if (r.ReasoningTokens > 0) t.AddRow("reasoning tokens", $"[yellow]{r.ReasoningTokens}[/]");
         if (r.ReasoningDetected) t.AddRow("split (chars)", $"thinking=[yellow]{r.ReasoningCharsApprox}[/] answer=[yellow]{r.AnswerCharsApprox}[/]");
-        t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
-        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
+        t.AddRow(KeyTokens, $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
         if (r.AnswerPreview != null) t.AddRow("answer", $"[italic]{Markup.Escape(r.AnswerPreview)}[/]");
         if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
@@ -150,13 +154,13 @@ public static class Render
         var status = r.Ok ? IconOk : IconFail;
         AnsiConsole.MarkupLine($"{status} structured [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
-        t.AddRow("latency", $"{r.LatencyMs} ms");
-        t.AddRow("parsed json", r.ParsedAsJson ? "[green]yes[/]" : "[red]no[/]");
-        t.AddRow("schema conform", r.SchemaConformant ? "[green]yes[/]" : "[red]no[/]");
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
+        t.AddRow("parsed json", r.ParsedAsJson ? IconYes : "[red]no[/]");
+        t.AddRow("schema conform", r.SchemaConformant ? IconYes : "[red]no[/]");
         if (r.SchemaViolations.Length > 0) t.AddRow("violations", Markup.Escape(string.Join("; ", r.SchemaViolations)));
         if (r.ObjectPreview != null) t.AddRow("object", $"[italic]{Markup.Escape(r.ObjectPreview)}[/]");
-        t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
-        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
+        t.AddRow(KeyTokens, $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
         if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
         if (r.Note != null && r.Error == null) AnsiConsole.MarkupLine($"[grey]note:[/]  {Markup.Escape(r.Note)}");
@@ -169,11 +173,11 @@ public static class Render
         var status = r.Ok ? IconOk : IconFail;
         AnsiConsole.MarkupLine($"{status} vision [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
-        t.AddRow("latency", $"{r.LatencyMs} ms");
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
         t.AddRow("image", Markup.Escape(r.ImageSource));
-        t.AddRow("accepted", r.ImageAccepted ? "[green]yes[/]" : "[red]no[/]");
-        t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
-        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
+        t.AddRow("accepted", r.ImageAccepted ? IconYes : "[red]no[/]");
+        t.AddRow(KeyTokens, $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
         if (r.ResponsePreview != null) t.AddRow("response", $"[italic]{Markup.Escape(r.ResponsePreview)}[/]");
         if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
         AnsiConsole.Write(t);
@@ -186,8 +190,17 @@ public static class Render
         var status = r.Ok ? IconOk : IconFail;
         AnsiConsole.MarkupLine($"{status} tools [bold]{r.Model}[/] @ [cyan]{r.Endpoint}[/]");
         var t = new Table().Border(TableBorder.Minimal).HideHeaders().AddColumn("k").AddColumn("v");
-        t.AddRow("latency", $"{r.LatencyMs} ms");
-        t.AddRow("tool call", r.ToolCalled ? "[green]yes[/]" : "[grey]no[/]");
+        t.AddRow(KeyLatency, $"{r.LatencyMs} ms");
+        t.AddRow("tool call", r.ToolCalled ? IconYes : "[grey]no[/]");
+        AddToolCallRows(t, r);
+        t.AddRow(KeyTokens, $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
+        if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
+        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
+        AnsiConsole.Write(t);
+    }
+
+    private static void AddToolCallRows(Table t, ToolsResult r)
+    {
         if (r.ToolCalled)
         {
             if (r.FunctionName != null) t.AddRow("function", $"[yellow]{Markup.Escape(r.FunctionName)}[/]");
@@ -198,10 +211,6 @@ public static class Render
             t.AddRow("note", "no tool call (model answered directly)");
             if (!string.IsNullOrEmpty(r.ResponsePreview)) t.AddRow("response", $"[italic]{Markup.Escape(r.ResponsePreview)}[/]");
         }
-        t.AddRow("tokens", $"prompt=[yellow]{r.PromptTokens}[/] completion=[yellow]{r.CompletionTokens}[/] total=[yellow]{r.TotalTokens}[/]");
-        if (r.FinishReason != null) t.AddRow("finish", Markup.Escape(r.FinishReason));
-        if (r.Error != null) t.AddRow(ErrorLabel, Markup.Escape(r.Error));
-        AnsiConsole.Write(t);
     }
 
     public static void Error(string error, string? hint = null)
@@ -216,5 +225,5 @@ public static class Render
     }
 
     private static void Json(string s) => Console.WriteLine(s);
-    private static string Yn(bool b) => b ? "[green]yes[/]" : "[grey]no[/]";
+    private static string Yn(bool b) => b ? IconYes : "[grey]no[/]";
 }

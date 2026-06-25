@@ -398,9 +398,11 @@ public static class Probe
             var choice = resp?.Choices.FirstOrDefault();
             var content = choice?.Message?.Content ?? "";
             var (parsed, conformant, violations, preview) = ValidatePerson(content);
-            string? note = parsed
-                ? (conformant ? null : "returned JSON did not match the requested schema")
-                : "response was not valid JSON (endpoint may not support structured output)";
+            string? note = null;
+            if (!parsed)
+                note = "response was not valid JSON (endpoint may not support structured output)";
+            else if (!conformant)
+                note = "returned JSON did not match the requested schema";
             return new StructuredResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
                 parsed, conformant, violations, preview, choice?.FinishReason,
                 resp?.Usage?.PromptTokens ?? 0,
@@ -454,7 +456,7 @@ public static class Probe
     }
 
     public static async Task<VisionResult> VisionAsync(
-        HttpClient http, string endpoint, string model, string imageUrl, string imageSource,
+        HttpClient http, string endpoint, string model, (string Url, string Source) image,
         string prompt, int maxTokens, CancellationToken ct)
     {
         var e = Normalize(endpoint);
@@ -462,7 +464,7 @@ public static class Probe
         var content = new[]
         {
             new OpenAiContentPart("text", Text: prompt),
-            new OpenAiContentPart("image_url", ImageUrl: new OpenAiImageUrl(imageUrl)),
+            new OpenAiContentPart("image_url", ImageUrl: new OpenAiImageUrl(image.Url)),
         };
         var body = new OpenAiVisionRequest(model,
             new[] { new OpenAiVisionMessage("user", content) }, MaxTokens: maxTokens, Temperature: 0);
@@ -478,12 +480,12 @@ public static class Probe
             var raw = await res.Content.ReadAsStringAsync(ct);
             if (!res.IsSuccessStatusCode)
                 return new VisionResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                    false, imageSource, null, 0, 0, 0, null, Trunc(raw, 200));
+                    false, image.Source, null, 0, 0, 0, null, Trunc(raw, 200));
             var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiChatResponse);
             var choice = resp?.Choices.FirstOrDefault();
             var text = choice?.Message?.Content ?? "";
             return new VisionResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                true, imageSource, choice?.FinishReason,
+                true, image.Source, choice?.FinishReason,
                 resp?.Usage?.PromptTokens ?? 0,
                 resp?.Usage?.CompletionTokens ?? 0,
                 resp?.Usage?.TotalTokens ?? 0,
@@ -493,7 +495,7 @@ public static class Probe
         {
             sw.Stop();
             return new VisionResult(e, model, false, null, sw.ElapsedMilliseconds,
-                false, imageSource, null, 0, 0, 0, null, ex.Message);
+                false, image.Source, null, 0, 0, 0, null, ex.Message);
         }
     }
 

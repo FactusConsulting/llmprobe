@@ -239,10 +239,10 @@ public sealed class VisionCommand : AsyncCommand<VisionSettings>
             Render.Error("no image provided", "Pass an image URL or local path with -i/--image (e.g. -i https://… or -i ./cat.png)");
             return 78;
         }
-        string url, source;
+        (string Url, string Source) image;
         try
         {
-            (url, source) = Probe.ResolveImage(s.Image);
+            image = Probe.ResolveImage(s.Image);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
@@ -250,7 +250,7 @@ public sealed class VisionCommand : AsyncCommand<VisionSettings>
             return 78;
         }
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.VisionAsync(http, s.Endpoint, s.Model, url, source, s.Prompt, s.MaxTokens, default);
+        var r = await Probe.VisionAsync(http, s.Endpoint, s.Model, image, s.Prompt, s.MaxTokens, default);
         Render.Vision(r);
         return r.Ok ? 0 : 74;
     }
