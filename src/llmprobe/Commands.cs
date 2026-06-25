@@ -388,6 +388,179 @@ public sealed class CapabilitiesCommand : AsyncCommand<EndpointSettings>
     }
 }
 
+public sealed class CompletionsSettings : PromptSettings
+{
+    [CommandOption("-p|--prompt <PROMPT>")]
+    [DefaultValue("The capital of France is")]
+    [Description("Prompt to complete. Use @file.txt to read from file, or @- for stdin.")]
+    public override string Prompt { get; init; } = "The capital of France is";
+
+    [CommandOption("--max-tokens <N>")]
+    [DefaultValue(16)]
+    [Description("Maximum completion tokens.")]
+    public override int MaxTokens { get; init; } = 16;
+}
+
+public sealed class InfillSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("default")]
+    [Description("Model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "default";
+
+    [CommandOption("--prefix <TEXT>")]
+    [DefaultValue("def add(a, b):\n    return ")]
+    [Description("Text before the cursor (input_prefix). Use @file.txt or @- for stdin.")]
+    public string Prefix { get; init; } = "def add(a, b):\n    return ";
+
+    [CommandOption("--suffix <TEXT>")]
+    [DefaultValue("\n\nprint(add(2, 3))")]
+    [Description("Text after the cursor (input_suffix). Use @file.txt or @- for stdin.")]
+    public string Suffix { get; init; } = "\n\nprint(add(2, 3))";
+
+    [CommandOption("--max-tokens <N>")]
+    [DefaultValue(64)]
+    [Description("Maximum predicted tokens (n_predict).")]
+    public int MaxTokens { get; init; } = 64;
+
+    public string ResolvedPrefix() => ResolveAtValue(Prefix);
+    public string ResolvedSuffix() => ResolveAtValue(Suffix);
+}
+
+public sealed class TokenizeSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("default")]
+    [Description("Model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "default";
+
+    [CommandOption("-i|--input <INPUT>")]
+    [DefaultValue("The quick brown fox jumps over the lazy dog.")]
+    [Description("Text to tokenize. Use @file.txt to read from file, or @- for stdin.")]
+    public string Input { get; init; } = "The quick brown fox jumps over the lazy dog.";
+
+    public string ResolvedInput() => ResolveAtValue(Input);
+}
+
+public sealed class LogprobsSettings : PromptSettings
+{
+    [CommandOption("-p|--prompt <PROMPT>")]
+    [DefaultValue("Reply with the single word: ok.")]
+    [Description("Prompt sent to elicit logprobs. Use @file.txt or @- for stdin.")]
+    public override string Prompt { get; init; } = "Reply with the single word: ok.";
+
+    [CommandOption("--max-tokens <N>")]
+    [DefaultValue(16)]
+    [Description("Maximum completion tokens (kept small; only the first few are reported).")]
+    public override int MaxTokens { get; init; } = 16;
+}
+
+public sealed class ClassifySettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("default")]
+    [Description("Classifier/scoring model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "default";
+
+    [CommandOption("-i|--input <INPUT>")]
+    [DefaultValue("I really enjoyed this movie, it was fantastic!")]
+    [Description("Text to classify, or the first text when scoring. Use @file.txt or @- for stdin.")]
+    public string Input { get; init; } = "I really enjoyed this movie, it was fantastic!";
+
+    [CommandOption("--score <TEXT>")]
+    [Description("Switch to scoring mode: similarity of --input vs this text via /score. Use @file.txt or @- for stdin.")]
+    public string? Score { get; init; }
+
+    public string ResolvedInput() => ResolveAtValue(Input);
+    public string ResolvedScore() => ResolveAtValue(Score!);
+}
+
+public sealed class CompletionsCommand : AsyncCommand<CompletionsSettings>
+{
+    public override Task<int> ExecuteAsync(CommandContext context, CompletionsSettings s)
+    {
+        s.ApplyToRender();
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.CompletionsAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
+            Render.Completions(r);
+            // A reachable endpoint missing this route still counts as success
+            // (reported as unsupported, exit code 0). Only a transport or an
+            // HTTP-level failure returns exit code 74.
+            return r.Ok ? 0 : 74;
+        });
+    }
+}
+
+public sealed class InfillCommand : AsyncCommand<InfillSettings>
+{
+    public override Task<int> ExecuteAsync(CommandContext context, InfillSettings s)
+    {
+        s.ApplyToRender();
+        return CommandRunner.GuardConfig(async () =>
+        {
+            var prefix = s.ResolvedPrefix();
+            var suffix = s.ResolvedSuffix();
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.InfillAsync(http, s.Endpoint, s.Model, prefix, suffix, s.MaxTokens, default);
+            Render.Infill(r);
+            return r.Ok ? 0 : 74;
+        });
+    }
+}
+
+public sealed class TokenizeCommand : AsyncCommand<TokenizeSettings>
+{
+    public override Task<int> ExecuteAsync(CommandContext context, TokenizeSettings s)
+    {
+        s.ApplyToRender();
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.TokenizeAsync(http, s.Endpoint, s.Model, s.ResolvedInput(), default);
+            Render.Tokenize(r);
+            return r.Ok ? 0 : 74;
+        });
+    }
+}
+
+public sealed class LogprobsCommand : AsyncCommand<LogprobsSettings>
+{
+    public override Task<int> ExecuteAsync(CommandContext context, LogprobsSettings s)
+    {
+        s.ApplyToRender();
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.LogprobsAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
+            Render.Logprobs(r);
+            return r.Ok ? 0 : 74;
+        });
+    }
+}
+
+public sealed class ClassifyCommand : AsyncCommand<ClassifySettings>
+{
+    public override Task<int> ExecuteAsync(CommandContext context, ClassifySettings s)
+    {
+        s.ApplyToRender();
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var input = s.ResolvedInput();
+            // When a score value is given, run cross-encoder pair scoring against
+            // the score route. Otherwise classify the single input against the
+            // classify route.
+            var r = s.Score != null
+                ? await Probe.ScoreAsync(http, s.Endpoint, s.Model, input, s.ResolvedScore(), default)
+                : await Probe.ClassifyAsync(http, s.Endpoint, s.Model, input, default);
+            Render.Classify(r);
+            return r.Ok ? 0 : 74;
+        });
+    }
+}
+
 public static class AgentGuidance
 {
     public const string Text = """
@@ -399,8 +572,16 @@ public static class AgentGuidance
               on it. Use for health checks, regression testing, and capability discovery.
               Covers chat (test/stream), embeddings (embed), rerankers (rerank),
               vision/multimodal input (vision), function/tool calling (tools),
-              reasoning/thinking models (reasoning) and structured/json-schema
-              output (structured).
+              reasoning/thinking models (reasoning), structured/json-schema
+              output (structured), legacy text completion (completions),
+              fill-in-the-middle (infill), tokenization (tokenize), token
+              logprobs (logprobs) and classification/scoring (classify).
+
+            SUPPORT DETECTION
+              completions/infill/tokenize/logprobs/classify are support probes:
+              when an endpoint lacks the route (404/400/405/501) or returns no
+              logprobs, that is reported as "supported": false at exit 0 — it is
+              NOT a failure. Only a transport/connection error is exit 74.
 
             SAFE BY DEFAULT
               All commands are read-mostly (single requests, --max-tokens defaults to 16).
@@ -414,6 +595,11 @@ public static class AgentGuidance
               structured       -> /v1/chat/completions (json_schema adherence)
               embed            -> /v1/embeddings   (reports dimensions + L2 norm)
               rerank           -> /v1/rerank       (reports ordering + relevance scores)
+              completions      -> /v1/completions  (legacy text completion; choices[].text)
+              logprobs         -> /v1/chat/completions (logprobs + top_logprobs)
+              tokenize         -> /tokenize        (OpenAI/vLLM or llama.cpp form)
+              infill           -> /infill          (llama.cpp fill-in-the-middle)
+              classify         -> /classify, /score (vLLM classifier / cross-encoder)
               A model-aware gateway routes by the request's model name, so pass -m
               to reach the intended backend.
 
@@ -457,6 +643,11 @@ public static class AgentGuidance
               llmprobe tools https://infer:8000 --json | jq .tool_called
               llmprobe reasoning https://infer:8000 --json | jq '{ok:.reasoning_detected,via:.reasoning_channel}'
               llmprobe structured https://infer:8000 --json | jq .schema_conformant
+              llmprobe completions https://infer:8000 -m <model> --json | jq '{ok:.supported,text:.text_preview}'
+              llmprobe tokenize https://infer:8000 -i "hello world" --json | jq .token_count
+              llmprobe logprobs https://infer:8000 --json | jq '{ok:.supported,first:.tokens[0]}'
+              llmprobe classify https://infer:8000 -i "great!" --json | jq '.labels[0]'
+              llmprobe infill https://infer:8000 --prefix "@a" --suffix "@b" --json | jq .content_preview
 
             COMPOSE WITH OTHER TOOLS
               llmprobe is a CLI. It pipes. It exits with meaningful codes. It writes

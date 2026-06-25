@@ -201,6 +201,85 @@ public static class Render
         }
     }
 
+    public static void Completions(CompletionsResult r)
+    {
+        var t = BeginSupported(r.Ok, r.Supported, r.Error,
+            () => JsonSerializer.Serialize(r, JsonContext.Default.CompletionsResult),
+            SupportedTitle("completions", r.Model, r.Endpoint), r.LatencyMs);
+        if (t == null) return;
+        if (r.Supported && r.Error == null)
+        {
+            if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
+            t.AddRow(KeyTokens, TokenRow(r.PromptTokens, r.CompletionTokens, r.TotalTokens));
+            if (r.TextPreview != null) t.AddRow("text", $"[italic]{Markup.Escape(r.TextPreview)}[/]");
+        }
+        EndSupported(t, r.Error, r.Note);
+    }
+
+    public static void Infill(InfillResult r)
+    {
+        var t = BeginSupported(r.Ok, r.Supported, r.Error,
+            () => JsonSerializer.Serialize(r, JsonContext.Default.InfillResult),
+            SupportedTitle("infill", r.Model, r.Endpoint), r.LatencyMs);
+        if (t == null) return;
+        if (r.Supported && r.Error == null)
+        {
+            t.AddRow(KeyTokens, TokenRow(r.PromptTokens, r.CompletionTokens, r.TotalTokens));
+            if (r.ContentPreview != null) t.AddRow("infilled", $"[italic]{Markup.Escape(r.ContentPreview)}[/]");
+        }
+        EndSupported(t, r.Error, r.Note);
+    }
+
+    public static void Tokenize(TokenizeResult r)
+    {
+        var t = BeginSupported(r.Ok, r.Supported, r.Error,
+            () => JsonSerializer.Serialize(r, JsonContext.Default.TokenizeResult),
+            SupportedTitle("tokenize", r.Model, r.Endpoint), r.LatencyMs);
+        if (t == null) return;
+        if (r.Supported && r.Error == null)
+        {
+            t.AddRow("token count", $"[yellow]{r.TokenCount}[/]");
+            if (r.FirstTokens.Length > 0)
+                t.AddRow("first tokens", Markup.Escape("[" + string.Join(", ", r.FirstTokens) + (r.TokenCount > r.FirstTokens.Length ? ", …" : "") + "]"));
+        }
+        EndSupported(t, r.Error, r.Note);
+    }
+
+    public static void Logprobs(LogprobsResult r)
+    {
+        var t = BeginSupported(r.Ok, r.Supported, r.Error,
+            () => JsonSerializer.Serialize(r, JsonContext.Default.LogprobsResult),
+            SupportedTitle("logprobs", r.Model, r.Endpoint), r.LatencyMs);
+        if (t == null) return;
+        if (r.Supported && r.Error == null)
+        {
+            t.AddRow("sampled", r.SampledTokens.ToString());
+            foreach (var tok in r.Tokens)
+            {
+                var alts = string.Join(", ", tok.TopAlternatives.Select(a => $"{Markup.Escape(a.Token)} ({a.Logprob:F2})"));
+                t.AddRow($"[yellow]{Markup.Escape(tok.Token)}[/] [grey]({tok.Logprob:F2})[/]", alts.Length > 0 ? alts : "—");
+            }
+            t.AddRow(KeyTokens, TokenRow(r.PromptTokens, r.CompletionTokens, r.TotalTokens));
+        }
+        if (r.FinishReason != null) t.AddRow(KeyFinish, Markup.Escape(r.FinishReason));
+        EndSupported(t, r.Error, r.Note);
+    }
+
+    public static void Classify(ClassifyResult r)
+    {
+        var t = BeginSupported(r.Ok, r.Supported, r.Error,
+            () => JsonSerializer.Serialize(r, JsonContext.Default.ClassifyResult),
+            SupportedTitle(r.Mode, r.Model, r.Endpoint), r.LatencyMs);
+        if (t == null) return;
+        if (r.Supported && r.Error == null)
+        {
+            if (r.Score != null) t.AddRow("score", $"[yellow]{r.Score:F4}[/]");
+            foreach (var l in r.Labels)
+                t.AddRow(Markup.Escape(l.Label), $"[yellow]{l.Probability:F4}[/]");
+        }
+        EndSupported(t, r.Error, r.Note);
+    }
+
     public static void Error(string error, string? hint = null)
     {
         if (Format == OutputFormat.Json)
@@ -224,6 +303,35 @@ public static class Render
         if (Format == OutputFormat.Json) { Json(serialize()); return true; }
         if (Quiet) { Console.WriteLine(ok ? "ok" : "fail"); return true; }
         return false;
+    }
+
+    // Shared open for the "supported-gated" renderers (completions, infill,
+    // tokenize, logprobs, classify): handle --json/--quiet, print the
+    // "{ok/fail} {title}" header (caller builds title as "label model @ endpoint"
+    // via SupportedTitle), and return a KvTable pre-seeded with latency plus a
+    // "supported" row (omitted on error). Returns null when ShortCircuit already
+    // produced the output and the caller should stop.
+    private static Table? BeginSupported(
+        bool ok, bool supported, string? error, Func<string> serialize, string title, long latencyMs)
+    {
+        if (ShortCircuit(ok, serialize)) return null;
+        AnsiConsole.MarkupLine($"{(ok ? IconOk : IconFail)} {title}");
+        var t = KvTable();
+        t.AddRow(KeyLatency, $"{latencyMs} ms");
+        if (error == null) t.AddRow("supported", supported ? IconYes : "[grey]no[/]");
+        return t;
+    }
+
+    private static string SupportedTitle(string label, string model, string endpoint) =>
+        $"{label} [bold]{model}[/] @ [cyan]{endpoint}[/]";
+
+    // Shared close for the supported-gated renderers: append the error row, write
+    // the table, then print the trailing note (suppressed when there was an error).
+    private static void EndSupported(Table t, string? error, string? note)
+    {
+        if (error != null) t.AddRow(ErrorLabel, Markup.Escape(error));
+        AnsiConsole.Write(t);
+        if (note != null && error == null) AnsiConsole.MarkupLine($"[grey]note:[/]  {Markup.Escape(note)}");
     }
 
     // The minimal two-column key/value table shared by most renderers.

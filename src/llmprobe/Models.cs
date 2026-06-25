@@ -32,6 +32,28 @@ namespace LlmProbe;
 [JsonSerializable(typeof(StructuredResult))]
 [JsonSerializable(typeof(OpenAiReasoningResponse))]
 [JsonSerializable(typeof(OpenAiStructuredRequest))]
+[JsonSerializable(typeof(CompletionsResult))]
+[JsonSerializable(typeof(OpenAiCompletionsRequest))]
+[JsonSerializable(typeof(OpenAiCompletionsResponse))]
+[JsonSerializable(typeof(InfillResult))]
+[JsonSerializable(typeof(LlamaInfillRequest))]
+[JsonSerializable(typeof(LlamaInfillResponse))]
+[JsonSerializable(typeof(TokenizeResult))]
+[JsonSerializable(typeof(OpenAiTokenizeRequest))]
+[JsonSerializable(typeof(OpenAiTokenizeResponse))]
+[JsonSerializable(typeof(LlamaTokenizeRequest))]
+[JsonSerializable(typeof(LlamaTokenizeResponse))]
+[JsonSerializable(typeof(LogprobsResult))]
+[JsonSerializable(typeof(LogprobItem))]
+[JsonSerializable(typeof(LogprobAlternative))]
+[JsonSerializable(typeof(OpenAiLogprobsRequest))]
+[JsonSerializable(typeof(OpenAiLogprobsResponse))]
+[JsonSerializable(typeof(ClassifyResult))]
+[JsonSerializable(typeof(ClassifyLabel))]
+[JsonSerializable(typeof(OpenAiClassifyRequest))]
+[JsonSerializable(typeof(OpenAiClassifyResponse))]
+[JsonSerializable(typeof(OpenAiScoreRequest))]
+[JsonSerializable(typeof(OpenAiScoreResponse))]
 public partial class JsonContext : JsonSerializerContext { }
 
 public record PingResult(
@@ -364,3 +386,192 @@ public record OpenAiStructuredRequest(
     [property: JsonPropertyName("response_format")] OpenAiResponseFormat ResponseFormat,
     [property: JsonPropertyName("max_tokens")] int? MaxTokens = null,
     [property: JsonPropertyName("temperature")] double? Temperature = null);
+
+// --- completions (legacy text completion: /v1/completions) ---
+// Unlike chat completions, the result lives on choices[0].text, not message.content.
+public record CompletionsResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    bool Supported,
+    int? StatusCode,
+    long LatencyMs,
+    int PromptTokens,
+    int CompletionTokens,
+    int TotalTokens,
+    string? FinishReason,
+    string? TextPreview,
+    string? Note,
+    string? Error);
+
+public record OpenAiCompletionsRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("prompt")] string Prompt,
+    [property: JsonPropertyName("max_tokens")] int? MaxTokens = null,
+    [property: JsonPropertyName("temperature")] double? Temperature = null);
+
+public record OpenAiCompletionsChoice(
+    [property: JsonPropertyName("text")] string? Text,
+    [property: JsonPropertyName("finish_reason")] string? FinishReason);
+
+public record OpenAiCompletionsResponse(
+    [property: JsonPropertyName("choices")] OpenAiCompletionsChoice[]? Choices,
+    [property: JsonPropertyName("usage")] OpenAiUsage? Usage);
+
+// --- infill (llama.cpp fill-in-the-middle: /infill) ---
+public record InfillResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    bool Supported,
+    int? StatusCode,
+    long LatencyMs,
+    int PromptTokens,
+    int CompletionTokens,
+    int TotalTokens,
+    string? ContentPreview,
+    string? Note,
+    string? Error);
+
+public record LlamaInfillRequest(
+    [property: JsonPropertyName("input_prefix")] string InputPrefix,
+    [property: JsonPropertyName("input_suffix")] string InputSuffix,
+    [property: JsonPropertyName("model")] string? Model = null,
+    [property: JsonPropertyName("n_predict")] int? NPredict = null,
+    [property: JsonPropertyName("temperature")] double? Temperature = null);
+
+// llama.cpp /infill returns the infilled text on "content"; token counts (when
+// present) live under "tokens_evaluated" / "tokens_predicted".
+public record LlamaInfillResponse(
+    [property: JsonPropertyName("content")] string? Content,
+    [property: JsonPropertyName("tokens_evaluated")] int? TokensEvaluated,
+    [property: JsonPropertyName("tokens_predicted")] int? TokensPredicted);
+
+// --- tokenize (token count: /tokenize) ---
+public record TokenizeResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    bool Supported,
+    int? StatusCode,
+    long LatencyMs,
+    int TokenCount,
+    int[] FirstTokens,
+    string? Note,
+    string? Error);
+
+// OpenAI/vLLM form: { model, prompt } -> { count, tokens }
+public record OpenAiTokenizeRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("prompt")] string Prompt);
+
+public record OpenAiTokenizeResponse(
+    [property: JsonPropertyName("count")] int? Count,
+    [property: JsonPropertyName("tokens")] int[]? Tokens);
+
+// llama.cpp form: { content } -> { tokens: [...] }
+public record LlamaTokenizeRequest(
+    [property: JsonPropertyName("content")] string Content);
+
+public record LlamaTokenizeResponse(
+    [property: JsonPropertyName("tokens")] int[]? Tokens);
+
+// --- logprobs (functional logprobs probe over /v1/chat/completions) ---
+public record LogprobsResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    bool Supported,
+    int? StatusCode,
+    long LatencyMs,
+    int SampledTokens,
+    LogprobItem[] Tokens,
+    string? FinishReason,
+    int PromptTokens,
+    int CompletionTokens,
+    int TotalTokens,
+    string? Note,
+    string? Error);
+
+public record LogprobItem(
+    string Token,
+    double Logprob,
+    LogprobAlternative[] TopAlternatives);
+
+public record LogprobAlternative(
+    string Token,
+    double Logprob);
+
+public record OpenAiLogprobsRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("messages")] OpenAiMessage[] Messages,
+    [property: JsonPropertyName("logprobs")] bool Logprobs,
+    [property: JsonPropertyName("top_logprobs")] int TopLogprobs,
+    [property: JsonPropertyName("max_tokens")] int? MaxTokens = null,
+    [property: JsonPropertyName("temperature")] double? Temperature = null);
+
+// logprobs response: choices[].logprobs.content[] -> { token, logprob, top_logprobs[] }
+public record OpenAiTopLogprob(
+    [property: JsonPropertyName("token")] string? Token,
+    [property: JsonPropertyName("logprob")] double Logprob);
+
+public record OpenAiLogprobContent(
+    [property: JsonPropertyName("token")] string? Token,
+    [property: JsonPropertyName("logprob")] double Logprob,
+    [property: JsonPropertyName("top_logprobs")] OpenAiTopLogprob[]? TopLogprobs);
+
+public record OpenAiLogprobs(
+    [property: JsonPropertyName("content")] OpenAiLogprobContent[]? Content);
+
+public record OpenAiLogprobsChoice(
+    [property: JsonPropertyName("message")] OpenAiMessage? Message,
+    [property: JsonPropertyName("logprobs")] OpenAiLogprobs? Logprobs,
+    [property: JsonPropertyName("finish_reason")] string? FinishReason);
+
+public record OpenAiLogprobsResponse(
+    [property: JsonPropertyName("choices")] OpenAiLogprobsChoice[]? Choices,
+    [property: JsonPropertyName("usage")] OpenAiUsage? Usage);
+
+// --- classify / score (vLLM classifier & cross-encoder scoring) ---
+public record ClassifyResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    bool Supported,
+    int? StatusCode,
+    long LatencyMs,
+    string Mode,
+    ClassifyLabel[] Labels,
+    double? Score,
+    string? Note,
+    string? Error);
+
+public record ClassifyLabel(
+    string Label,
+    double Probability);
+
+public record OpenAiClassifyRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("input")] string Input);
+
+// vLLM /classify: data[] each has a predicted "label" and a "probs" array (one
+// probability per label) plus optional "label_names".
+public record OpenAiClassifyData(
+    [property: JsonPropertyName("label")] string? Label,
+    [property: JsonPropertyName("probs")] double[]? Probs,
+    [property: JsonPropertyName("label_names")] string[]? LabelNames);
+
+public record OpenAiClassifyResponse(
+    [property: JsonPropertyName("data")] OpenAiClassifyData[]? Data);
+
+public record OpenAiScoreRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("text_1")] string Text1,
+    [property: JsonPropertyName("text_2")] string Text2);
+
+// vLLM /score: data[] each has a numeric "score".
+public record OpenAiScoreData(
+    [property: JsonPropertyName("score")] double Score);
+
+public record OpenAiScoreResponse(
+    [property: JsonPropertyName("data")] OpenAiScoreData[]? Data);

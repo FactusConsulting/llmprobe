@@ -16,6 +16,11 @@ var version = Assembly.GetExecutingAssembly()
     .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
     ?.InformationalVersion ?? "0.0.0-dev";
 
+// Repeated CLI-example placeholders, hoisted to satisfy the no-duplicate-literal
+// rule and keep the example wording consistent across commands.
+const string ModelArg = "<model>";
+const string ClassifyCmd = "classify";
+
 var app = new CommandApp();
 app.Configure(config =>
 {
@@ -51,7 +56,7 @@ app.Configure(config =>
         .WithExample("vision", "https://infer:8000", "-i", "./diagram.png", "--json");
     config.AddCommand<ToolsCommand>("tools")
         .WithDescription("Probe whether the model performs function/tool calling.")
-        .WithExample("tools", "https://infer:8000", "-m", "<model>")
+        .WithExample("tools", "https://infer:8000", "-m", ModelArg)
         .WithExample("tools", "https://infer:8000", "-p", "What's the weather in Paris? Use the tool.", "--json");
     config.AddCommand<ReasoningCommand>("reasoning")
         .WithDescription("Probe a thinking/reasoning model; detect reasoning_content, <think> blocks, reasoning tokens.")
@@ -59,8 +64,29 @@ app.Configure(config =>
         .WithExample("reasoning", "https://infer:8000", "-p", "@puzzle.txt", "--json");
     config.AddCommand<StructuredCommand>("structured")
         .WithDescription("Probe structured output: request a json_schema response and validate schema adherence.")
-        .WithExample("structured", "https://infer:8000", "-m", "<model>")
+        .WithExample("structured", "https://infer:8000", "-m", ModelArg)
         .WithExample("structured", "https://infer:8000", "--json");
+    config.AddCommand<CompletionsCommand>("completions")
+        .WithDescription("Legacy text completion via /v1/completions; report finish reason, tokens, text.")
+        .WithExample("completions", "https://infer:8000", "-m", ModelArg, "-p", "The capital of France is")
+        .WithExample("completions", "https://infer:8000", "-p", "@prompt.txt", "--json");
+    config.AddCommand<InfillCommand>("infill")
+        .WithDescription("Fill-in-the-middle via llama.cpp /infill; report the infilled content.")
+        .WithExample("infill", "https://infer:8000", "--prefix", "def add(a, b):\n    return ", "--suffix", "\nprint(add(2,3))")
+        .WithExample("infill", "https://infer:8000", "--prefix", "@head.py", "--suffix", "@tail.py", "--json");
+    config.AddCommand<TokenizeCommand>("tokenize")
+        .WithDescription("Count tokens via /tokenize (OpenAI/vLLM or llama.cpp form).")
+        .WithExample("tokenize", "https://infer:8000", "-m", ModelArg, "-i", "hello world")
+        .WithExample("tokenize", "https://infer:8000", "-i", "@doc.txt", "--json");
+    config.AddCommand<LogprobsCommand>("logprobs")
+        .WithDescription("Probe token logprobs: report chosen tokens, their logprob, and top alternatives.")
+        .WithExample("logprobs", "https://infer:8000", "-m", ModelArg)
+        .WithExample("logprobs", "https://infer:8000", "-p", "Reply with: ok.", "--json");
+    config.AddCommand<ClassifyCommand>(ClassifyCmd)
+        .WithDescription("Sequence classification via /classify, or text-pair scoring via /score (vLLM).")
+        .WithExample(ClassifyCmd, "https://infer:8000", "-m", "<classifier-model>", "-i", "I loved this movie!")
+        .WithExample(ClassifyCmd, "https://infer:8000", "-m", "<reranker-model>", "-i", "what is the capital?", "--score", "Copenhagen is the capital")
+        .WithExample(ClassifyCmd, "https://infer:8000", "-i", "@review.txt", "--json");
     config.AddCommand<CapabilitiesCommand>("capabilities")
         .WithAlias("caps")
         .WithDescription("Detect features the endpoint supports (streaming, json mode, logprobs, ...).")
