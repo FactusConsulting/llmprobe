@@ -35,8 +35,28 @@ public class GlobalSettings : CommandSettings
     protected static string ResolveAtValue(string value)
     {
         if (value == "@-") return Console.In.ReadToEnd().Trim();
-        if (value.StartsWith('@')) return File.ReadAllText(value[1..]).Trim();
+        if (value.StartsWith('@')) return Probe.ReadAtFile(value[1..]).Trim();
         return value;
+    }
+}
+
+// Run a command body that may resolve a user-supplied @file (prompt/input/query/
+// document), translating a ConfigException (unreadable file) into a clean rendered
+// config error with exit 78 — distinct from request/transport failures (exit 74).
+// Keeps the @file try/catch in one place rather than duplicated across commands.
+public static class CommandRunner
+{
+    public static async Task<int> GuardConfig(Func<Task<int>> body)
+    {
+        try
+        {
+            return await body();
+        }
+        catch (ConfigException ex)
+        {
+            Render.Error(ex.Message, ex.Hint);
+            return 78;
+        }
     }
 }
 
@@ -143,73 +163,69 @@ public sealed class StructuredSettings : PromptSettings
 
 public sealed class ReasoningCommand : AsyncCommand<ReasoningSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, ReasoningSettings s)
+    public override Task<int> ExecuteAsync(CommandContext context, ReasoningSettings s)
     {
         s.ApplyToRender();
-        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.ReasoningAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
-        Render.Reasoning(r);
-        return r.Ok ? 0 : 74;
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.ReasoningAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
+            Render.Reasoning(r);
+            return r.Ok ? 0 : 74;
+        });
     }
 }
 
 public sealed class StructuredCommand : AsyncCommand<StructuredSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, StructuredSettings s)
+    public override Task<int> ExecuteAsync(CommandContext context, StructuredSettings s)
     {
         s.ApplyToRender();
-        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.StructuredAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
-        Render.Structured(r);
-        // A successful HTTP call that returns bad structure is still exit 0 — only
-        // transport/HTTP failure is 74. (Render distinguishes the two via fields.)
-        return r.Ok ? 0 : 74;
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.StructuredAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
+            Render.Structured(r);
+            // A successful HTTP call that returns bad structure is still exit 0 — only
+            // transport/HTTP failure is 74. (Render distinguishes the two via fields.)
+            return r.Ok ? 0 : 74;
+        });
     }
 }
 
-public sealed class VisionSettings : EndpointSettings
+public sealed class VisionSettings : PromptSettings
 {
-    [CommandOption("-m|--model <MODEL>")]
-    [DefaultValue("default")]
-    [Description("Multimodal model identifier (use 'llmprobe models <endpoint>' to list).")]
-    public string Model { get; init; } = "default";
-
     [CommandOption("-i|--image <IMAGE>")]
     [Description("Image to send: an http(s):// URL, or a local file path / @file inlined as a base64 data: URL (png/jpeg/webp/gif).")]
     public required string Image { get; init; }
 
     [CommandOption("-p|--prompt <PROMPT>")]
     [DefaultValue("Describe this image in one word.")]
-    [Description("Prompt sent alongside the image.")]
-    public string Prompt { get; init; } = "Describe this image in one word.";
+    [Description("Prompt sent alongside the image. Use @file.txt to read from file, or @- for stdin.")]
+    public override string Prompt { get; init; } = "Describe this image in one word.";
 
     [CommandOption("--max-tokens <N>")]
     [DefaultValue(32)]
     [Description("Maximum completion tokens.")]
-    public int MaxTokens { get; init; } = 32;
+    public override int MaxTokens { get; init; } = 32;
 }
 
-public sealed class ToolsSettings : EndpointSettings
+public sealed class ToolsSettings : PromptSettings
 {
-    [CommandOption("-m|--model <MODEL>")]
-    [DefaultValue("default")]
-    [Description("Model identifier (use 'llmprobe models <endpoint>' to list).")]
-    public string Model { get; init; } = "default";
-
     [CommandOption("-p|--prompt <PROMPT>")]
     [DefaultValue("What's the weather in Copenhagen? Use the tool.")]
-    [Description("Prompt designed to trigger a tool call.")]
-    public string Prompt { get; init; } = "What's the weather in Copenhagen? Use the tool.";
+    [Description("Prompt designed to trigger a tool call. Use @file.txt to read from file, or @- for stdin.")]
+    public override string Prompt { get; init; } = "What's the weather in Copenhagen? Use the tool.";
 
     [CommandOption("--max-tokens <N>")]
     [DefaultValue(128)]
     [Description("Maximum completion tokens.")]
-    public int MaxTokens { get; init; } = 128;
+    public override int MaxTokens { get; init; } = 128;
 }
 
 public sealed class VisionCommand : AsyncCommand<VisionSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, VisionSettings s)
+    public override Task<int> ExecuteAsync(CommandContext context, VisionSettings s)
     {
         s.ApplyToRender();
         // Spectre does not enforce the C# `required` modifier, so a missing -i
@@ -217,34 +233,43 @@ public sealed class VisionCommand : AsyncCommand<VisionSettings>
         if (string.IsNullOrWhiteSpace(s.Image))
         {
             Render.Error("no image provided", "Pass an image URL or local path with -i/--image (e.g. -i https://… or -i ./cat.png)");
-            return 78;
+            return Task.FromResult(78);
         }
-        (string Url, string Source) image;
-        try
+        return CommandRunner.GuardConfig(async () =>
         {
-            image = Probe.ResolveImage(s.Image);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            Render.Error($"could not read image: {ex.Message}", "Check the path, or pass an http(s):// URL instead");
-            return 78;
-        }
-        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.VisionAsync(http, s.Endpoint, s.Model, image, s.Prompt, s.MaxTokens, default);
-        Render.Vision(r);
-        return r.Ok ? 0 : 74;
+            (string Url, string Source) image;
+            try
+            {
+                image = Probe.ResolveImage(s.Image);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                Render.Error($"could not read image: {ex.Message}", "Check the path, or pass an http(s):// URL instead");
+                return 78;
+            }
+            // ResolvedPrompt() may throw ConfigException for an unreadable -p @file;
+            // the guard turns that into the same clean config error (exit 78).
+            var prompt = s.ResolvedPrompt();
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.VisionAsync(http, s.Endpoint, s.Model, image, prompt, s.MaxTokens, default);
+            Render.Vision(r);
+            return r.Ok ? 0 : 74;
+        });
     }
 }
 
 public sealed class ToolsCommand : AsyncCommand<ToolsSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, ToolsSettings s)
+    public override Task<int> ExecuteAsync(CommandContext context, ToolsSettings s)
     {
         s.ApplyToRender();
-        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.ToolsAsync(http, s.Endpoint, s.Model, s.Prompt, s.MaxTokens, default);
-        Render.Tools(r);
-        return r.Ok ? 0 : 74;
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.ToolsAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
+            Render.Tools(r);
+            return r.Ok ? 0 : 74;
+        });
     }
 }
 
@@ -275,43 +300,52 @@ public sealed class ModelsCommand : AsyncCommand<EndpointSettings>
 
 public sealed class TestCommand : AsyncCommand<ChatSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, ChatSettings s)
+    public override Task<int> ExecuteAsync(CommandContext context, ChatSettings s)
     {
         s.ApplyToRender();
-        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.ChatTestAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
-        Render.Test(r);
-        return r.Ok ? 0 : 74;
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.ChatTestAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
+            Render.Test(r);
+            return r.Ok ? 0 : 74;
+        });
     }
 }
 
 public sealed class StreamCommand : AsyncCommand<ChatSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, ChatSettings s)
+    public override Task<int> ExecuteAsync(CommandContext context, ChatSettings s)
     {
         s.ApplyToRender();
-        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.StreamTestAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
-        Render.Stream(r);
-        return r.Ok ? 0 : 74;
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.StreamTestAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
+            Render.Stream(r);
+            return r.Ok ? 0 : 74;
+        });
     }
 }
 
 public sealed class EmbedCommand : AsyncCommand<EmbedSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, EmbedSettings s)
+    public override Task<int> ExecuteAsync(CommandContext context, EmbedSettings s)
     {
         s.ApplyToRender();
-        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.EmbedAsync(http, s.Endpoint, s.Model, new[] { s.ResolvedInput() }, default);
-        Render.Embed(r);
-        return r.Ok ? 0 : 74;
+        return CommandRunner.GuardConfig(async () =>
+        {
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.EmbedAsync(http, s.Endpoint, s.Model, new[] { s.ResolvedInput() }, default);
+            Render.Embed(r);
+            return r.Ok ? 0 : 74;
+        });
     }
 }
 
 public sealed class RerankCommand : AsyncCommand<RerankSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, RerankSettings s)
+    public override Task<int> ExecuteAsync(CommandContext context, RerankSettings s)
     {
         s.ApplyToRender();
         // Spectre does not enforce the C# `required` modifier, so a missing -q
@@ -321,19 +355,24 @@ public sealed class RerankCommand : AsyncCommand<RerankSettings>
         if (string.IsNullOrWhiteSpace(s.Query))
         {
             Render.Error("no query provided", "Pass a query with -q/--query, or -q @query.txt / -q @-");
-            return 78;
+            return Task.FromResult(78);
         }
-        var query = s.ResolvedQuery();
-        var docs = s.ResolvedDocuments();
-        if (docs.Length == 0)
+        return CommandRunner.GuardConfig(async () =>
         {
-            Render.Error("no documents provided", "Pass one or more with -d/--document (repeatable), or -d @docs.txt");
-            return 78;
-        }
-        using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
-        var r = await Probe.RerankAsync(http, s.Endpoint, s.Model, query, docs, s.TopN, default);
-        Render.Rerank(r);
-        return r.Ok ? 0 : 74;
+            // ResolvedQuery()/ResolvedDocuments() may throw ConfigException for an
+            // unreadable @file; the guard turns that into a clean config error (78).
+            var query = s.ResolvedQuery();
+            var docs = s.ResolvedDocuments();
+            if (docs.Length == 0)
+            {
+                Render.Error("no documents provided", "Pass one or more with -d/--document (repeatable), or -d @docs.txt");
+                return 78;
+            }
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.RerankAsync(http, s.Endpoint, s.Model, query, docs, s.TopN, default);
+            Render.Rerank(r);
+            return r.Ok ? 0 : 74;
+        });
     }
 }
 
