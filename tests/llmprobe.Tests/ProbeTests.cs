@@ -709,3 +709,240 @@ public class ClassifyTests
         Assert.Empty(Probe.BuildLabels(null));
     }
 }
+
+public class TranscribeTests
+{
+    [Fact]
+    public void TranscribeResult_HasStableFieldNames()
+    {
+        var result = new TranscribeResult("http://infer:8080", "whisper-1", true, true,
+            200, 540, "./speech.wav", 11, "hello world", 1.5, null, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.TranscribeResult);
+
+        Assert.Contains("\"supported\"", json);
+        Assert.Contains("\"audio_source\"", json);
+        Assert.Contains("\"text_chars\"", json);
+        Assert.Contains("\"text_preview\"", json);
+        Assert.Contains("\"duration_seconds\"", json);
+        Assert.DoesNotContain("\"TextPreview\"", json);
+    }
+
+    [Theory]
+    [InlineData("a.wav", "audio/wav")]
+    [InlineData("a.WAV", "audio/wav")]
+    [InlineData("a.mp3", "audio/mpeg")]
+    [InlineData("a.m4a", "audio/mp4")]
+    [InlineData("a.flac", "audio/flac")]
+    [InlineData("a.ogg", "audio/ogg")]
+    [InlineData("a.webm", "audio/webm")]
+    [InlineData("a.txt", "application/octet-stream")]
+    public void AudioMimeFromExtension_InfersFromExtension(string path, string expected)
+    {
+        Assert.Equal(expected, Probe.AudioMimeFromExtension(path));
+    }
+
+    [Fact]
+    public void OpenAiTranscriptionResponse_ParsesTextAndDuration()
+    {
+        const string raw = """{ "text": "hello world", "duration": 1.5 }""";
+        var resp = System.Text.Json.JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiTranscriptionResponse);
+        Assert.Equal("hello world", resp!.Text);
+        Assert.Equal(1.5, resp.Duration);
+    }
+
+    [Fact]
+    public async Task BuildTranscriptionContent_IncludesFileAndModelParts()
+    {
+        var audio = new byte[] { 0x52, 0x49, 0x46, 0x46 }; // "RIFF"
+        using var content = Probe.BuildTranscriptionContent(audio, "speech.mp3", "whisper-1");
+
+        var parts = content.ToList();
+        Assert.Equal(2, parts.Count);
+
+        var filePart = parts.Single(p => p.Headers.ContentDisposition!.Name!.Trim('"') == "file");
+        Assert.Equal("speech.mp3", filePart.Headers.ContentDisposition!.FileName!.Trim('"'));
+        Assert.Equal("audio/mpeg", filePart.Headers.ContentType!.ToString());
+
+        var modelPart = parts.Single(p => p.Headers.ContentDisposition!.Name!.Trim('"') == "model");
+        Assert.Equal("whisper-1", await modelPart.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public void ReadFileBytes_ThrowsConfigException_ForMissingFile()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"llmprobe-missing-{Guid.NewGuid():N}.wav");
+        var ex = Assert.Throws<ConfigException>(() => Probe.ReadFileBytes(missing));
+        Assert.Contains(missing, ex.Message);
+        Assert.NotNull(ex.Hint);
+    }
+
+    [Fact]
+    public void ReadFileBytes_ReturnsBytes_ForReadableFile()
+    {
+        var bytes = new byte[] { 1, 2, 3, 4 };
+        var path = Path.Combine(Path.GetTempPath(), $"llmprobe-test-{Guid.NewGuid():N}.wav");
+        File.WriteAllBytes(path, bytes);
+        try { Assert.Equal(bytes, Probe.ReadFileBytes(path)); }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task TranscribeAsync_ParsesTextResponse()
+    {
+        var handler = new StubHandler(_ =>
+            new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{ "text": "hello world", "duration": 2.0 }"""),
+            });
+        using var http = new HttpClient(handler);
+        var r = await Probe.TranscribeAsync(http, "http://infer:8080", "whisper-1",
+            new byte[] { 1, 2, 3 }, "speech.wav", "./speech.wav", default);
+        Assert.True(r.Ok);
+        Assert.True(r.Supported);
+        Assert.Equal("hello world", r.TextPreview);
+        Assert.Equal(11, r.TextChars);
+        Assert.Equal(2.0, r.DurationSeconds);
+    }
+
+    [Fact]
+    public async Task TranscribeAsync_ReportsUnsupported_OnNotFound()
+    {
+        var handler = new StubHandler(_ =>
+            new HttpResponseMessage(System.Net.HttpStatusCode.NotFound)
+            {
+                Content = new StringContent("no such route"),
+            });
+        using var http = new HttpClient(handler);
+        var r = await Probe.TranscribeAsync(http, "http://infer:8080", "whisper-1",
+            new byte[] { 1 }, "a.wav", "a.wav", default);
+        Assert.True(r.Ok);
+        Assert.False(r.Supported);
+        Assert.Null(r.Error);
+    }
+}
+
+public class SpeakTests
+{
+    [Fact]
+    public void SpeakResult_HasStableFieldNames()
+    {
+        var result = new SpeakResult("http://infer:8080", "tts-1", true, true,
+            200, 320, "alloy", "mp3", "audio/mpeg", 20480, "out.mp3", null, null);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, JsonContext.Default.SpeakResult);
+
+        Assert.Contains("\"supported\"", json);
+        Assert.Contains("\"content_type\"", json);
+        Assert.Contains("\"bytes_received\"", json);
+        Assert.Contains("\"output_path\"", json);
+        Assert.Contains("\"voice\"", json);
+        Assert.DoesNotContain("\"BytesReceived\"", json);
+    }
+
+    [Fact]
+    public void OpenAiSpeechRequest_SerializesTtsFieldNames()
+    {
+        var req = new OpenAiSpeechRequest("tts-1", "Hej", "alloy", "mp3");
+        var json = System.Text.Json.JsonSerializer.Serialize(req, JsonContext.Default.OpenAiSpeechRequest);
+        Assert.Contains("\"model\"", json);
+        Assert.Contains("\"input\"", json);
+        Assert.Contains("\"voice\"", json);
+        Assert.Contains("\"response_format\"", json);
+        Assert.Contains("\"mp3\"", json);
+    }
+
+    [Fact]
+    public void WriteAudioFile_WritesBytesToOutputPath()
+    {
+        var bytes = new byte[] { 0x49, 0x44, 0x33, 0x04 }; // "ID3" + version
+        var path = Path.Combine(Path.GetTempPath(), $"llmprobe-test-{Guid.NewGuid():N}.mp3");
+        try
+        {
+            Probe.WriteAudioFile(path, bytes);
+            Assert.Equal(bytes, File.ReadAllBytes(path));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void WriteAudioFile_ThrowsConfigException_ForUnwritablePath()
+    {
+        // A path whose parent directory does not exist is unwritable.
+        var bad = Path.Combine(Path.GetTempPath(), $"llmprobe-nodir-{Guid.NewGuid():N}", "out.mp3");
+        var ex = Assert.Throws<ConfigException>(() => Probe.WriteAudioFile(bad, new byte[] { 1 }));
+        Assert.Contains(bad, ex.Message);
+        Assert.NotNull(ex.Hint);
+    }
+
+    [Fact]
+    public async Task SpeakAsync_HandlesBinaryResponse_AndWritesOutput()
+    {
+        var audioBytes = new byte[] { 0x49, 0x44, 0x33, 0x04, 0x00 };
+        var handler = new StubHandler(_ =>
+        {
+            var res = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(audioBytes),
+            };
+            res.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
+            return res;
+        });
+        using var http = new HttpClient(handler);
+        var outPath = Path.Combine(Path.GetTempPath(), $"llmprobe-test-{Guid.NewGuid():N}.mp3");
+        try
+        {
+            var r = await Probe.SpeakAsync(http, "http://infer:8080", new OpenAiSpeechRequest("tts-1", "Hej", "alloy", "mp3"), outPath, default);
+            Assert.True(r.Ok);
+            Assert.True(r.Supported);
+            Assert.Equal(audioBytes.Length, r.BytesReceived);
+            Assert.Equal("audio/mpeg", r.ContentType);
+            Assert.Equal(outPath, r.OutputPath);
+            Assert.Equal(audioBytes, File.ReadAllBytes(outPath));
+        }
+        finally { if (File.Exists(outPath)) File.Delete(outPath); }
+    }
+
+    [Fact]
+    public async Task SpeakAsync_ReportsMetadataOnly_WhenNoOutputGiven()
+    {
+        var audioBytes = new byte[] { 0x00, 0x01, 0x02 };
+        var handler = new StubHandler(_ =>
+            new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(audioBytes),
+            });
+        using var http = new HttpClient(handler);
+        var r = await Probe.SpeakAsync(http, "http://infer:8080", new OpenAiSpeechRequest("tts-1", "Hej", "alloy", "mp3"), null, default);
+        Assert.True(r.Ok);
+        Assert.Equal(audioBytes.Length, r.BytesReceived);
+        Assert.Null(r.OutputPath);
+        Assert.NotNull(r.Note);
+    }
+
+    [Fact]
+    public async Task SpeakAsync_ReportsUnsupported_OnNotFound()
+    {
+        var handler = new StubHandler(_ =>
+            new HttpResponseMessage(System.Net.HttpStatusCode.NotFound)
+            {
+                Content = new StringContent("no such route"),
+            });
+        using var http = new HttpClient(handler);
+        var r = await Probe.SpeakAsync(http, "http://infer:8080", new OpenAiSpeechRequest("tts-1", "Hej", "alloy", "mp3"), null, default);
+        Assert.True(r.Ok);          // unsupported is still a clean result (exit 0)
+        Assert.False(r.Supported);
+        Assert.Null(r.Error);
+        Assert.NotNull(r.Note);
+    }
+}
+
+// Minimal stubbed HttpMessageHandler so the audio probes can be exercised against
+// an in-memory response without a live server.
+internal sealed class StubHandler : HttpMessageHandler
+{
+    private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
+
+    public StubHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) => _responder = responder;
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        => Task.FromResult(_responder(request));
+}

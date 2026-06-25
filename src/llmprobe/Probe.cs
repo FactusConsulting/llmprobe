@@ -36,6 +36,22 @@ public static class Probe
         }
     }
 
+    // Byte-oriented counterpart of ReadAtFile for binary inputs (e.g. the audio file
+    // the transcribe command uploads). Same ConfigException-on-failure contract so a
+    // missing/unreadable file surfaces as a clean config error (exit 78).
+    internal static byte[] ReadFileBytes(string path)
+    {
+        try
+        {
+            return File.ReadAllBytes(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            throw new ConfigException($"could not read file '{path}': {ex.Message}",
+                "Check the path and permissions");
+        }
+    }
+
     public static HttpClient CreateClient(string? apiKey, TimeSpan timeout)
     {
         var c = new HttpClient { Timeout = timeout };
@@ -857,5 +873,136 @@ public static class Probe
                 names != null && i < names.Length ? names[i] : $"LABEL_{i}", p))
             .OrderByDescending(l => l.Probability)
             .ToArray();
+    }
+
+    // Infer an audio content type from a file extension, mirroring MimeFromExtension
+    // for images. Used to label the multipart 'file' part so the server can pick the
+    // right decoder. Unknown extensions fall back to the generic binary type.
+    internal static string AudioMimeFromExtension(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".wav" => "audio/wav",
+            ".mp3" => "audio/mpeg",
+            ".m4a" => "audio/mp4",
+            ".flac" => "audio/flac",
+            ".ogg" => "audio/ogg",
+            ".webm" => "audio/webm",
+            _ => "application/octet-stream",
+        };
+    }
+
+    // Build the multipart/form-data body for a transcription request: a binary
+    // 'file' part (labelled with the inferred audio content type + original
+    // filename) plus a 'model' field. Factored out so a test can assert the parts
+    // without a live server. The caller owns disposing the returned content.
+    internal static MultipartFormDataContent BuildTranscriptionContent(byte[] audio, string fileName, string model)
+    {
+        var content = new MultipartFormDataContent();
+        var filePart = new ByteArrayContent(audio);
+        filePart.Headers.ContentType = new MediaTypeHeaderValue(AudioMimeFromExtension(fileName));
+        content.Add(filePart, "file", fileName);
+        content.Add(new StringContent(model), "model");
+        return content;
+    }
+
+    // --- transcribe: speech-to-text (POST /v1/audio/transcriptions, multipart) ---
+    // Doesn't fit the JSON PostJsonAsync skeleton (the body is multipart/form-data),
+    // but keeps the same timing / try-catch / unsupported-status mapping shape.
+    public static async Task<TranscribeResult> TranscribeAsync(
+        HttpClient http, string endpoint, string model, byte[] audio, string fileName, string source, CancellationToken ct)
+    {
+        var e = Normalize(endpoint);
+        var sw = Stopwatch.StartNew();
+        using var content = BuildTranscriptionContent(audio, fileName, model);
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/audio/transcriptions") { Content = content };
+        try
+        {
+            using var res = await http.SendAsync(req, ct);
+            sw.Stop();
+            var raw = await res.Content.ReadAsStringAsync(ct);
+            var status = (int)res.StatusCode;
+            if (!res.IsSuccessStatusCode)
+            {
+                var unsupported = IsUnsupportedStatus(status);
+                return new TranscribeResult(e, model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
+                    source, 0, null, null,
+                    unsupported ? "not supported by this endpoint (no /v1/audio/transcriptions route)" : null,
+                    unsupported ? null : Trunc(raw, 200));
+            }
+            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiTranscriptionResponse);
+            var text = resp?.Text ?? "";
+            return new TranscribeResult(e, model, true, true, status, sw.ElapsedMilliseconds,
+                source, text.Length, Trunc(text, 160), resp?.Duration, null, null);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new TranscribeResult(e, model, false, true, null, sw.ElapsedMilliseconds,
+                source, 0, null, null, null, ex.Message);
+        }
+    }
+
+    // --- speak: text-to-speech (POST /v1/audio/speech, binary audio response) ---
+    // The response body is audio bytes, not JSON, so this also can't use the JSON
+    // skeleton. When outputPath is set the bytes are written there (a write failure
+    // surfaces as a ConfigException -> exit 78); otherwise only metadata is reported.
+    public static async Task<SpeakResult> SpeakAsync(
+        HttpClient http, string endpoint, OpenAiSpeechRequest body,
+        string? outputPath, CancellationToken ct)
+    {
+        var e = Normalize(endpoint);
+        var sw = Stopwatch.StartNew();
+        var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiSpeechRequest);
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/audio/speech")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        try
+        {
+            using var res = await http.SendAsync(req, ct);
+            sw.Stop();
+            var status = (int)res.StatusCode;
+            if (!res.IsSuccessStatusCode)
+            {
+                var raw = await res.Content.ReadAsStringAsync(ct);
+                var unsupported = IsUnsupportedStatus(status);
+                return new SpeakResult(e, body.Model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
+                    body.Voice, body.ResponseFormat, null, 0, null,
+                    unsupported ? "not supported by this endpoint (no /v1/audio/speech route)" : null,
+                    unsupported ? null : Trunc(raw, 200));
+            }
+            var bytes = await res.Content.ReadAsByteArrayAsync(ct);
+            var contentType = res.Content.Headers.ContentType?.ToString();
+            if (outputPath != null) WriteAudioFile(outputPath, bytes);
+            var note = outputPath == null
+                ? "no -o/--output given; audio not written (metadata only)"
+                : null;
+            return new SpeakResult(e, body.Model, true, true, status, sw.ElapsedMilliseconds,
+                body.Voice, body.ResponseFormat, contentType, bytes.Length, outputPath, note, null);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new SpeakResult(e, body.Model, false, true, null, sw.ElapsedMilliseconds,
+                body.Voice, body.ResponseFormat, null, 0, outputPath, null, ex.Message);
+        }
+    }
+
+    // Write synthesized audio to disk, translating the unwritable-file exceptions
+    // into a ConfigException so the command surfaces a clean config error (exit 78)
+    // rather than an unhandled raw exception, matching the @file read convention.
+    internal static void WriteAudioFile(string path, byte[] bytes)
+    {
+        try
+        {
+            File.WriteAllBytes(path, bytes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            throw new ConfigException($"could not write audio to '{path}': {ex.Message}",
+                "Check the path and permissions, or omit -o/--output to report metadata only");
+        }
     }
 }

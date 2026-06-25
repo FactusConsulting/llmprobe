@@ -561,6 +561,92 @@ public sealed class ClassifyCommand : AsyncCommand<ClassifySettings>
     }
 }
 
+public sealed class TranscribeSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("whisper-1")]
+    [Description("Speech-to-text model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "whisper-1";
+
+    [CommandOption("-f|--file <PATH>")]
+    [Description("Local audio file to transcribe (wav/mp3/m4a/flac/ogg/webm).")]
+    public required string File { get; init; }
+}
+
+public sealed class SpeakSettings : EndpointSettings
+{
+    [CommandOption("-m|--model <MODEL>")]
+    [DefaultValue("tts-1")]
+    [Description("Text-to-speech model identifier (use 'llmprobe models <endpoint>' to list).")]
+    public string Model { get; init; } = "tts-1";
+
+    [CommandOption("-i|--input <TEXT>")]
+    [DefaultValue("Hello from llmprobe.")]
+    [Description("Text to synthesize. Use @file.txt to read from file, or @- for stdin.")]
+    public string Input { get; init; } = "Hello from llmprobe.";
+
+    [CommandOption("--voice <NAME>")]
+    [DefaultValue("alloy")]
+    [Description("Voice name to synthesize with.")]
+    public string Voice { get; init; } = "alloy";
+
+    [CommandOption("--format <FMT>")]
+    [DefaultValue("mp3")]
+    [Description("Audio response_format (e.g. mp3, wav, opus, flac).")]
+    public string Format { get; init; } = "mp3";
+
+    [CommandOption("-o|--output <PATH>")]
+    [Description("Write the synthesized audio to this file. Omit to report metadata only (no binary dumped to the terminal).")]
+    public string? Output { get; init; }
+
+    public string ResolvedInput() => ResolveAtValue(Input);
+}
+
+public sealed class TranscribeCommand : AsyncCommand<TranscribeSettings>
+{
+    public override Task<int> ExecuteAsync(CommandContext context, TranscribeSettings s)
+    {
+        s.ApplyToRender();
+        // Spectre does not enforce the C# `required` modifier, so a missing -f
+        // leaves File null. Validate before use instead of throwing a raw NRE.
+        if (string.IsNullOrWhiteSpace(s.File))
+        {
+            Render.Error("no audio file provided", "Pass a local audio file with -f/--file (e.g. -f ./speech.wav)");
+            return Task.FromResult(78);
+        }
+        return CommandRunner.GuardConfig(async () =>
+        {
+            // A missing or unreadable audio file is surfaced as a clean config
+            // error (exit code 78) by the guard wrapping this lambda.
+            var audio = Probe.ReadFileBytes(s.File);
+            var fileName = Path.GetFileName(s.File);
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var r = await Probe.TranscribeAsync(http, s.Endpoint, s.Model, audio, fileName, s.File, default);
+            Render.Transcribe(r);
+            return r.Ok ? 0 : 74;
+        });
+    }
+}
+
+public sealed class SpeakCommand : AsyncCommand<SpeakSettings>
+{
+    public override Task<int> ExecuteAsync(CommandContext context, SpeakSettings s)
+    {
+        s.ApplyToRender();
+        return CommandRunner.GuardConfig(async () =>
+        {
+            // ResolvedInput() may throw ConfigException for an unreadable @file, and
+            // SpeakAsync throws it for an unwritable -o; the guard maps both to 78.
+            var input = s.ResolvedInput();
+            using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
+            var body = new OpenAiSpeechRequest(s.Model, input, s.Voice, s.Format);
+            var r = await Probe.SpeakAsync(http, s.Endpoint, body, s.Output, default);
+            Render.Speak(r);
+            return r.Ok ? 0 : 74;
+        });
+    }
+}
+
 public static class AgentGuidance
 {
     public const string Text = """
@@ -575,10 +661,11 @@ public static class AgentGuidance
               reasoning/thinking models (reasoning), structured/json-schema
               output (structured), legacy text completion (completions),
               fill-in-the-middle (infill), tokenization (tokenize), token
-              logprobs (logprobs) and classification/scoring (classify).
+              logprobs (logprobs), classification/scoring (classify),
+              speech-to-text (transcribe) and text-to-speech (speak).
 
             SUPPORT DETECTION
-              completions/infill/tokenize/logprobs/classify are support probes:
+              completions/infill/tokenize/logprobs/classify/transcribe/speak are support probes:
               when an endpoint lacks the route (404/400/405/501) or returns no
               logprobs, that is reported as "supported": false at exit 0 — it is
               NOT a failure. Only a transport/connection error is exit 74.
@@ -600,6 +687,8 @@ public static class AgentGuidance
               tokenize         -> /tokenize        (OpenAI/vLLM or llama.cpp form)
               infill           -> /infill          (llama.cpp fill-in-the-middle)
               classify         -> /classify, /score (vLLM classifier / cross-encoder)
+              transcribe       -> /v1/audio/transcriptions (speech-to-text, multipart upload)
+              speak            -> /v1/audio/speech (text-to-speech, binary audio response)
               A model-aware gateway routes by the request's model name, so pass -m
               to reach the intended backend.
 
@@ -648,6 +737,8 @@ public static class AgentGuidance
               llmprobe logprobs https://infer:8000 --json | jq '{ok:.supported,first:.tokens[0]}'
               llmprobe classify https://infer:8000 -i "great!" --json | jq '.labels[0]'
               llmprobe infill https://infer:8000 --prefix "@a" --suffix "@b" --json | jq .content_preview
+              llmprobe transcribe https://infer:8000 -f ./speech.wav --json | jq '{ok:.supported,text:.text_preview}'
+              llmprobe speak https://infer:8000 -i "Hej" -o out.mp3 --json | jq '{ok:.supported,bytes:.bytes_received}'
 
             COMPOSE WITH OTHER TOOLS
               llmprobe is a CLI. It pipes. It exits with meaningful codes. It writes
