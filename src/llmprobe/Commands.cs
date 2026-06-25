@@ -28,6 +28,16 @@ public class GlobalSettings : CommandSettings
     public TimeSpan Timeout => TimeSpan.FromSeconds(TimeoutSeconds);
 
     public void ApplyToRender() { Render.Format = Json ? OutputFormat.Json : OutputFormat.Text; Render.Quiet = Quiet; }
+
+    // Resolve a single-value option that may use the @-/@file convention shared by
+    // the prompt/query/input options: "@-" reads (trimmed) stdin, "@file" reads a
+    // (trimmed) file, anything else is taken literally.
+    protected static string ResolveAtValue(string value)
+    {
+        if (value == "@-") return Console.In.ReadToEnd().Trim();
+        if (value.StartsWith('@')) return File.ReadAllText(value[1..]).Trim();
+        return value;
+    }
 }
 
 public class EndpointSettings : GlobalSettings
@@ -54,12 +64,7 @@ public sealed class ChatSettings : EndpointSettings
     [Description("Maximum completion tokens.")]
     public int MaxTokens { get; init; } = 16;
 
-    public string ResolvedPrompt()
-    {
-        if (Prompt == "@-") return Console.In.ReadToEnd().Trim();
-        if (Prompt.StartsWith('@')) return File.ReadAllText(Prompt[1..]).Trim();
-        return Prompt;
-    }
+    public string ResolvedPrompt() => ResolveAtValue(Prompt);
 }
 
 public sealed class EmbedSettings : EndpointSettings
@@ -74,12 +79,7 @@ public sealed class EmbedSettings : EndpointSettings
     [Description("Text to embed. Use @file.txt to read from file, or @- for stdin.")]
     public string Input { get; init; } = "The quick brown fox jumps over the lazy dog.";
 
-    public string ResolvedInput()
-    {
-        if (Input == "@-") return Console.In.ReadToEnd().Trim();
-        if (Input.StartsWith('@')) return File.ReadAllText(Input[1..]).Trim();
-        return Input;
-    }
+    public string ResolvedInput() => ResolveAtValue(Input);
 }
 
 public sealed class RerankSettings : EndpointSettings
@@ -101,12 +101,7 @@ public sealed class RerankSettings : EndpointSettings
     [Description("Return only the top N documents (server-side). Default: all.")]
     public int? TopN { get; init; }
 
-    public string ResolvedQuery()
-    {
-        if (Query == "@-") return Console.In.ReadToEnd().Trim();
-        if (Query.StartsWith('@')) return File.ReadAllText(Query[1..]).Trim();
-        return Query;
-    }
+    public string ResolvedQuery() => ResolveAtValue(Query);
 
     public string[] ResolvedDocuments() => Probe.ExpandLines(Documents);
 }
@@ -128,12 +123,7 @@ public sealed class ReasoningSettings : EndpointSettings
     [Description("Maximum completion tokens (high enough to allow a thinking phase).")]
     public int MaxTokens { get; init; } = 512;
 
-    public string ResolvedPrompt()
-    {
-        if (Prompt == "@-") return Console.In.ReadToEnd().Trim();
-        if (Prompt.StartsWith('@')) return File.ReadAllText(Prompt[1..]).Trim();
-        return Prompt;
-    }
+    public string ResolvedPrompt() => ResolveAtValue(Prompt);
 }
 
 public sealed class StructuredSettings : EndpointSettings
@@ -153,12 +143,7 @@ public sealed class StructuredSettings : EndpointSettings
     [Description("Maximum completion tokens.")]
     public int MaxTokens { get; init; } = 128;
 
-    public string ResolvedPrompt()
-    {
-        if (Prompt == "@-") return Console.In.ReadToEnd().Trim();
-        if (Prompt.StartsWith('@')) return File.ReadAllText(Prompt[1..]).Trim();
-        return Prompt;
-    }
+    public string ResolvedPrompt() => ResolveAtValue(Prompt);
 }
 
 public sealed class ReasoningCommand : AsyncCommand<ReasoningSettings>
