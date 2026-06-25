@@ -205,7 +205,7 @@ public static class Render
     {
         var t = BeginSupported(r.Ok, r.Supported, r.Error,
             () => JsonSerializer.Serialize(r, JsonContext.Default.CompletionsResult),
-            "completions", r.Model, r.Endpoint, r.LatencyMs);
+            SupportedTitle("completions", r.Model, r.Endpoint), r.LatencyMs);
         if (t == null) return;
         if (r.Supported && r.Error == null)
         {
@@ -220,7 +220,7 @@ public static class Render
     {
         var t = BeginSupported(r.Ok, r.Supported, r.Error,
             () => JsonSerializer.Serialize(r, JsonContext.Default.InfillResult),
-            "infill", r.Model, r.Endpoint, r.LatencyMs);
+            SupportedTitle("infill", r.Model, r.Endpoint), r.LatencyMs);
         if (t == null) return;
         if (r.Supported && r.Error == null)
         {
@@ -234,7 +234,7 @@ public static class Render
     {
         var t = BeginSupported(r.Ok, r.Supported, r.Error,
             () => JsonSerializer.Serialize(r, JsonContext.Default.TokenizeResult),
-            "tokenize", r.Model, r.Endpoint, r.LatencyMs);
+            SupportedTitle("tokenize", r.Model, r.Endpoint), r.LatencyMs);
         if (t == null) return;
         if (r.Supported && r.Error == null)
         {
@@ -249,7 +249,7 @@ public static class Render
     {
         var t = BeginSupported(r.Ok, r.Supported, r.Error,
             () => JsonSerializer.Serialize(r, JsonContext.Default.LogprobsResult),
-            "logprobs", r.Model, r.Endpoint, r.LatencyMs);
+            SupportedTitle("logprobs", r.Model, r.Endpoint), r.LatencyMs);
         if (t == null) return;
         if (r.Supported && r.Error == null)
         {
@@ -269,7 +269,7 @@ public static class Render
     {
         var t = BeginSupported(r.Ok, r.Supported, r.Error,
             () => JsonSerializer.Serialize(r, JsonContext.Default.ClassifyResult),
-            r.Mode, r.Model, r.Endpoint, r.LatencyMs);
+            SupportedTitle(r.Mode, r.Model, r.Endpoint), r.LatencyMs);
         if (t == null) return;
         if (r.Supported && r.Error == null)
         {
@@ -307,20 +307,23 @@ public static class Render
 
     // Shared open for the "supported-gated" renderers (completions, infill,
     // tokenize, logprobs, classify): handle --json/--quiet, print the
-    // "{ok/fail} {label} {model} @ {endpoint}" header, and return a KvTable
-    // pre-seeded with latency plus a "supported" row (omitted on error). Returns
-    // null when ShortCircuit already produced the output and the caller should stop.
+    // "{ok/fail} {title}" header (caller builds title as "label model @ endpoint"
+    // via SupportedTitle), and return a KvTable pre-seeded with latency plus a
+    // "supported" row (omitted on error). Returns null when ShortCircuit already
+    // produced the output and the caller should stop.
     private static Table? BeginSupported(
-        bool ok, bool supported, string? error, Func<string> serialize,
-        string label, string model, string endpoint, long latencyMs)
+        bool ok, bool supported, string? error, Func<string> serialize, string title, long latencyMs)
     {
         if (ShortCircuit(ok, serialize)) return null;
-        AnsiConsole.MarkupLine($"{(ok ? IconOk : IconFail)} {label} [bold]{model}[/] @ [cyan]{endpoint}[/]");
+        AnsiConsole.MarkupLine($"{(ok ? IconOk : IconFail)} {title}");
         var t = KvTable();
         t.AddRow(KeyLatency, $"{latencyMs} ms");
         if (error == null) t.AddRow("supported", supported ? IconYes : "[grey]no[/]");
         return t;
     }
+
+    private static string SupportedTitle(string label, string model, string endpoint) =>
+        $"{label} [bold]{model}[/] @ [cyan]{endpoint}[/]";
 
     // Shared close for the supported-gated renderers: append the error row, write
     // the table, then print the trailing note (suppressed when there was an error).
