@@ -5,8 +5,37 @@ using System.Text.Json;
 
 namespace LlmProbe;
 
+// Raised when a user-supplied @file (prompt/input/query/document/image) cannot be
+// read. Commands catch this once and surface it as a clean config error (exit 78),
+// distinct from a request/transport failure (exit 74).
+public sealed class ConfigException : Exception
+{
+    public string? Hint { get; }
+
+    public ConfigException(string message, string? hint = null) : base(message)
+    {
+        Hint = hint;
+    }
+}
+
 public static class Probe
 {
+    // Read a user-supplied @file path, translating the unreadable-file exceptions
+    // (missing/permission/security) into a ConfigException so callers can surface a
+    // clean config error instead of an unhandled raw exception.
+    internal static string ReadAtFile(string path)
+    {
+        try
+        {
+            return File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            throw new ConfigException($"could not read file '{path}': {ex.Message}",
+                "Check the path and permissions, or pass the value inline / via @- (stdin)");
+        }
+    }
+
     public static HttpClient CreateClient(string? apiKey, TimeSpan timeout)
     {
         var c = new HttpClient { Timeout = timeout };
@@ -457,6 +486,12 @@ public static class Probe
         else if (age.ValueKind != JsonValueKind.Number || !age.TryGetInt64(out _))
             violations.Add($"'age' is not an integer ({age.ValueKind})");
 
+        // The fixed schema is strict (additionalProperties:false): any key beyond
+        // the {name, age} schema makes the object non-conformant.
+        foreach (var prop in root.EnumerateObject())
+            if (prop.Name != "name" && prop.Name != "age")
+                violations.Add($"unexpected property '{prop.Name}'");
+
         var preview = Trunc(root.GetRawText().Replace("\n", " ").Replace("\r", ""), 160);
         return (true, violations.Count == 0, violations.ToArray(), preview);
     }
@@ -573,7 +608,7 @@ public static class Probe
             if (v == "@-")
                 outp.AddRange(SplitLines(Console.In.ReadToEnd()));
             else if (v.StartsWith('@'))
-                outp.AddRange(SplitLines(File.ReadAllText(v[1..])));
+                outp.AddRange(SplitLines(ReadAtFile(v[1..])));
             else
                 outp.Add(v);
         }

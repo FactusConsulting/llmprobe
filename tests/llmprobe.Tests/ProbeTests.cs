@@ -243,6 +243,25 @@ public class StructuredTests
         Assert.False(conformant);
         Assert.Contains(violations, v => v.Contains("expected object"));
     }
+
+    [Fact]
+    public void ValidatePerson_RejectsExtraProperties()
+    {
+        var (parsed, conformant, violations, _) =
+            Probe.ValidatePerson("{\"name\":\"Alice\",\"age\":30,\"email\":\"a@x.dk\"}");
+        Assert.True(parsed);
+        Assert.False(conformant);
+        Assert.Contains(violations, v => v.Contains("unexpected property 'email'"));
+    }
+
+    [Fact]
+    public void ValidatePerson_AcceptsExactSchemaWithoutExtras()
+    {
+        var (_, conformant, violations, _) =
+            Probe.ValidatePerson("{\"name\":\"Alice\",\"age\":30}");
+        Assert.True(conformant);
+        Assert.Empty(violations);
+    }
 }
 
 public class VisionTests
@@ -399,5 +418,43 @@ public class InputExpansionTests
     public void L2Norm_ComputesEuclideanLength()
     {
         Assert.Equal(5.0, Probe.L2Norm(new[] { 3f, 4f }), 5);
+    }
+
+    [Fact]
+    public void ReadAtFile_ReturnsContents_ForReadableFile()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"llmprobe-test-{Guid.NewGuid():N}.txt");
+        File.WriteAllText(path, "hello world");
+        try { Assert.Equal("hello world", Probe.ReadAtFile(path)); }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void ReadAtFile_ThrowsConfigException_ForMissingFile()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"llmprobe-missing-{Guid.NewGuid():N}.txt");
+        var ex = Assert.Throws<ConfigException>(() => Probe.ReadAtFile(missing));
+        Assert.Contains(missing, ex.Message);
+        Assert.NotNull(ex.Hint);
+    }
+
+    [Fact]
+    public void ExpandLines_ThrowsConfigException_ForMissingAtFile()
+    {
+        var missing = "@" + Path.Combine(Path.GetTempPath(), $"llmprobe-missing-{Guid.NewGuid():N}.txt");
+        Assert.Throws<ConfigException>(() => Probe.ExpandLines(new[] { missing }));
+    }
+
+    [Fact]
+    public void ExpandLines_ReadsAtFile_LineByLine()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"llmprobe-test-{Guid.NewGuid():N}.txt");
+        File.WriteAllText(path, "alpha\nbeta\n\ngamma\n");
+        try
+        {
+            var result = Probe.ExpandLines(new[] { "@" + path });
+            Assert.Equal(new[] { "alpha", "beta", "gamma" }, result);
+        }
+        finally { File.Delete(path); }
     }
 }
