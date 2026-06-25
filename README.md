@@ -53,6 +53,28 @@ For humans, you get rich colored output via Spectre.Console — tables, status i
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+```sh
+brew tap factusconsulting/tools
+brew install llmprobe
+```
+
+The tap lives at [FactusConsulting/homebrew-tools](https://github.com/FactusConsulting/homebrew-tools); `llmprobe` is bumped there automatically on every release.
+
+### Chocolatey (Windows, self-hosted feed)
+
+`llmprobe` is published to a self-hosted Chocolatey feed on GitHub Pages (not the
+community repository). Add the source once, then install:
+
+```powershell
+choco source add -n=llmprobe -s="https://factusconsulting.github.io/llmprobe/chocolatey/index.json"
+choco install llmprobe --source=llmprobe -y
+```
+
+Upgrade with `choco upgrade llmprobe --source=llmprobe`. The package installs a
+single self-contained `llmprobe.exe` and shims it onto your `PATH`.
+
 ### Prebuilt binaries
 
 Download from [Releases](https://github.com/FactusConsulting/llmprobe/releases) — single-file binaries for:
