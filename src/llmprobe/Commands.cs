@@ -485,8 +485,9 @@ public sealed class CompletionsCommand : AsyncCommand<CompletionsSettings>
             using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
             var r = await Probe.CompletionsAsync(http, s.Endpoint, s.Model, s.ResolvedPrompt(), s.MaxTokens, default);
             Render.Completions(r);
-            // A successful call whose route is missing reports supported=false at exit 0;
-            // only transport/HTTP failure (Ok=false) is 74.
+            // A reachable endpoint missing this route still counts as success
+            // (reported as unsupported, exit code 0). Only a transport or an
+            // HTTP-level failure returns exit code 74.
             return r.Ok ? 0 : 74;
         });
     }
@@ -548,8 +549,9 @@ public sealed class ClassifyCommand : AsyncCommand<ClassifySettings>
         {
             using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
             var input = s.ResolvedInput();
-            // A --score value switches to cross-encoder pair scoring via /score;
-            // otherwise classify the single input via /classify.
+            // When a score value is given, run cross-encoder pair scoring against
+            // the score route. Otherwise classify the single input against the
+            // classify route.
             var r = s.Score != null
                 ? await Probe.ScoreAsync(http, s.Endpoint, s.Model, input, s.ResolvedScore(), default)
                 : await Probe.ClassifyAsync(http, s.Endpoint, s.Model, input, default);
