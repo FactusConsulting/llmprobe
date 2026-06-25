@@ -54,6 +54,10 @@ namespace LlmProbe;
 [JsonSerializable(typeof(OpenAiClassifyResponse))]
 [JsonSerializable(typeof(OpenAiScoreRequest))]
 [JsonSerializable(typeof(OpenAiScoreResponse))]
+[JsonSerializable(typeof(TranscribeResult))]
+[JsonSerializable(typeof(OpenAiTranscriptionResponse))]
+[JsonSerializable(typeof(SpeakResult))]
+[JsonSerializable(typeof(OpenAiSpeechRequest))]
 public partial class JsonContext : JsonSerializerContext { }
 
 public record PingResult(
@@ -575,3 +579,46 @@ public record OpenAiScoreData(
 
 public record OpenAiScoreResponse(
     [property: JsonPropertyName("data")] OpenAiScoreData[]? Data);
+
+// --- transcribe (speech-to-text: /v1/audio/transcriptions, multipart upload) ---
+public record TranscribeResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    bool Supported,
+    int? StatusCode,
+    long LatencyMs,
+    string AudioSource,
+    int TextChars,
+    string? TextPreview,
+    double? DurationSeconds,
+    string? Note,
+    string? Error);
+
+// /v1/audio/transcriptions returns the recognized text on "text"; some servers
+// also echo the audio "duration".
+public record OpenAiTranscriptionResponse(
+    [property: JsonPropertyName("text")] string? Text,
+    [property: JsonPropertyName("duration")] double? Duration);
+
+// --- speak (text-to-speech: /v1/audio/speech, binary audio response) ---
+public record SpeakResult(
+    string Endpoint,
+    string Model,
+    bool Ok,
+    bool Supported,
+    int? StatusCode,
+    long LatencyMs,
+    string Voice,
+    string Format,
+    string? ContentType,
+    int BytesReceived,
+    string? OutputPath,
+    string? Note,
+    string? Error);
+
+public record OpenAiSpeechRequest(
+    [property: JsonPropertyName("model")] string Model,
+    [property: JsonPropertyName("input")] string Input,
+    [property: JsonPropertyName("voice")] string Voice,
+    [property: JsonPropertyName("response_format")] string ResponseFormat);

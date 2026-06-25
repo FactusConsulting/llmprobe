@@ -87,6 +87,14 @@ app.Configure(config =>
         .WithExample(ClassifyCmd, "https://infer:8000", "-m", "<classifier-model>", "-i", "I loved this movie!")
         .WithExample(ClassifyCmd, "https://infer:8000", "-m", "<reranker-model>", "-i", "what is the capital?", "--score", "Copenhagen is the capital")
         .WithExample(ClassifyCmd, "https://infer:8000", "-i", "@review.txt", "--json");
+    config.AddCommand<TranscribeCommand>("transcribe")
+        .WithDescription("Speech-to-text via /v1/audio/transcriptions; report the transcribed text.")
+        .WithExample("transcribe", "https://infer:8000", "-m", "whisper-1", "-f", "./speech.wav")
+        .WithExample("transcribe", "https://infer:8000", "-f", "./speech.mp3", "--json");
+    config.AddCommand<SpeakCommand>("speak")
+        .WithDescription("Text-to-speech via /v1/audio/speech; write synthesized audio to a file.")
+        .WithExample("speak", "https://infer:8000", "-m", "tts-1", "-i", "Hej", "-o", "out.mp3")
+        .WithExample("speak", "https://infer:8000", "-i", "@script.txt", "--voice", "alloy", "--json");
     config.AddCommand<CapabilitiesCommand>("capabilities")
         .WithAlias("caps")
         .WithDescription("Detect features the endpoint supports (streaming, json mode, logprobs, ...).")

@@ -280,6 +280,39 @@ public static class Render
         EndSupported(t, r.Error, r.Note);
     }
 
+    public static void Transcribe(TranscribeResult r)
+    {
+        var t = BeginSupported(r.Ok, r.Supported, r.Error,
+            () => JsonSerializer.Serialize(r, JsonContext.Default.TranscribeResult),
+            SupportedTitle("transcribe", r.Model, r.Endpoint), r.LatencyMs);
+        if (t == null) return;
+        if (r.Supported && r.Error == null)
+        {
+            t.AddRow("audio", Markup.Escape(r.AudioSource));
+            if (r.DurationSeconds != null) t.AddRow("duration", $"[yellow]{r.DurationSeconds:F2}[/] s");
+            t.AddRow("text chars", $"[yellow]{r.TextChars}[/]");
+            if (r.TextPreview != null) t.AddRow("text", $"[italic]{Markup.Escape(r.TextPreview)}[/]");
+        }
+        EndSupported(t, r.Error, r.Note);
+    }
+
+    public static void Speak(SpeakResult r)
+    {
+        var t = BeginSupported(r.Ok, r.Supported, r.Error,
+            () => JsonSerializer.Serialize(r, JsonContext.Default.SpeakResult),
+            SupportedTitle("speak", r.Model, r.Endpoint), r.LatencyMs);
+        if (t == null) return;
+        if (r.Supported && r.Error == null)
+        {
+            t.AddRow("voice", Markup.Escape(r.Voice));
+            t.AddRow("format", Markup.Escape(r.Format));
+            if (r.ContentType != null) t.AddRow("content type", Markup.Escape(r.ContentType));
+            t.AddRow("bytes", $"[yellow]{r.BytesReceived}[/]");
+            if (r.OutputPath != null) t.AddRow("output", Markup.Escape(r.OutputPath));
+        }
+        EndSupported(t, r.Error, r.Note);
+    }
+
     public static void Error(string error, string? hint = null)
     {
         if (Format == OutputFormat.Json)

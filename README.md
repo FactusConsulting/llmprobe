@@ -26,15 +26,17 @@ llmprobe infill http://infer:8000 --prefix a --suffix b # fill-in-the-middle (ll
 llmprobe tokenize http://infer:8000 -i "hello" # count tokens (/tokenize)
 llmprobe logprobs http://infer:8000            # probe token logprobs + top alternatives
 llmprobe classify http://infer:8000 -i "great!" # sequence classification / scoring (vLLM)
+llmprobe transcribe http://infer:8000 -f a.wav # speech-to-text (/v1/audio/transcriptions)
+llmprobe speak http://infer:8000 -i "Hej" -o out.mp3 # text-to-speech (/v1/audio/speech)
 llmprobe capabilities http://infer:8000        # detect features (streaming, JSON, vision)
 llmprobe help-ai                               # guidance for AI agents using this tool
 ```
 
 Works against any OpenAI-compatible endpoint: **vLLM**, **llama.cpp** (`llama-server`), **Ollama**, **OpenAI**, **Anthropic** (via gateways), **OpenRouter**, **Mistral**, custom RAG-gateways.
 
-Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`vision`/`tools`/`reasoning`/`structured`/`logprobs`/`capabilities` → `/v1/chat/completions`; `completions` → `/v1/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`; `tokenize` → `/tokenize`; `infill` → `/infill` (llama.cpp); `classify` → `/classify` (or `/score` with `--score`, vLLM).
+Endpoint coverage: `ping`/`models` → `/v1/models`; `test`/`stream`/`vision`/`tools`/`reasoning`/`structured`/`logprobs`/`capabilities` → `/v1/chat/completions`; `completions` → `/v1/completions`; `embed` → `/v1/embeddings`; `rerank` → `/v1/rerank`; `tokenize` → `/tokenize`; `infill` → `/infill` (llama.cpp); `classify` → `/classify` (or `/score` with `--score`, vLLM); `transcribe` → `/v1/audio/transcriptions`; `speak` → `/v1/audio/speech`.
 
-The `completions`, `infill`, `tokenize`, `logprobs` and `classify` commands are **support probes**: when an endpoint lacks the route (404/400/405/501) or returns no logprobs, they report `supported: false` and exit `0` — that's a clean "not supported by this endpoint", not a failure. Only a transport/connection error exits `74`.
+The `completions`, `infill`, `tokenize`, `logprobs`, `classify`, `transcribe` and `speak` commands are **support probes**: when an endpoint lacks the route (404/400/405/501) or returns no logprobs, they report `supported: false` and exit `0` — that's a clean "not supported by this endpoint", not a failure. Only a transport/connection error exits `74`.
 
 ## Why this exists (the agent angle)
 
@@ -260,6 +262,45 @@ llmprobe classify http://infer:8000 -m my-reranker -i "what is the capital?" --s
 
 On a non-classifier endpoint, `supported` is `no`
 ("not supported (vLLM classifier/score models only)").
+
+### Transcribe (speech-to-text)
+
+```sh
+$ llmprobe transcribe http://infer:8000 -m whisper-1 -f ./speech.wav
+✓ transcribe whisper-1 @ http://infer:8000
+latency     540 ms
+supported   yes
+audio       ./speech.wav
+duration    1.50 s
+text chars  11
+text        hello world
+```
+
+Uploads the local audio file to `/v1/audio/transcriptions` as multipart/form-data
+(the content type is inferred from the extension: wav/mp3/m4a/flac/ogg/webm) and
+reads the recognized text from `text`. `-f/--file` is required; a missing or
+unreadable file is a config error (exit `78`). On an endpoint without the route,
+`supported` is `no` (exit `0`).
+
+### Speak (text-to-speech)
+
+```sh
+$ llmprobe speak http://infer:8000 -m tts-1 -i "Hej med dig" --voice alloy -o out.mp3
+✓ speak tts-1 @ http://infer:8000
+latency       320 ms
+supported     yes
+voice         alloy
+format        mp3
+content type  audio/mpeg
+bytes         20480
+output        out.mp3
+```
+
+Sends `{model, input, voice, response_format}` to `/v1/audio/speech` and reads the
+**binary** audio response. `-i/--input` accepts `@file` / `@-`. With `-o/--output`
+the audio is written to that file (a write failure is a config error, exit `78`);
+without it, only metadata is reported (the binary is never dumped to the terminal).
+On an endpoint without the route, `supported` is `no` (exit `0`).
 
 ### Compose with shell
 
