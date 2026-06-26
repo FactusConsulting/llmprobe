@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>llmprobe</id>
+    <version>0.2.2</version>
+    <title>llmprobe</title>
+    <authors>FactusConsulting</authors>
+    <owners>FactusConsulting</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <licenseUrl>https://github.com/FactusConsulting/llmprobe/blob/main/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/FactusConsulting/llmprobe</projectUrl>
+    <description>Agent-friendly CLI for probing OpenAI-compatible LLM endpoints. Health checks, model listing, latency and streaming TTFT measurement, and capability detection (vision, tools, reasoning, structured output, embeddings, rerank, audio). Composable through pipes, colored output for humans, stable JSON for agents. Ships as a single self-contained executable.</description>
+    <summary>Agent-friendly CLI for probing OpenAI-compatible LLM endpoints.</summary>
+    <tags>llm cli openai probe ollama vllm llama-cpp ai agent dotnet</tags>
+    <packageSourceUrl>https://github.com/FactusConsulting/llmprobe</packageSourceUrl>
+  </metadata>
+</package>
