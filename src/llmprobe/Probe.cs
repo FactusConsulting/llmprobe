@@ -120,11 +120,7 @@ public static class Probe
         Func<long, string, TResult> onException)
     {
         var sw = Stopwatch.StartNew();
-        RawSink.Request(Post, url, requestJson);
-        var req = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(requestJson, Encoding.UTF8, "application/json"),
-        };
+        var req = BuildJsonPost(url, requestJson);
         try
         {
             using var res = await http.SendAsync(req, ct);
@@ -142,6 +138,18 @@ public static class Probe
             RawSink.ResponseFailed(ex.Message);
             return onException(sw.ElapsedMilliseconds, ex.Message);
         }
+    }
+
+    // Build the POST request for a JSON body, mirroring it to the --raw sink first.
+    // Shared by PostJsonAsync and the probes that can't use that skeleton (streaming
+    // SSE, binary audio) but still send an ordinary JSON request.
+    private static HttpRequestMessage BuildJsonPost(string url, string json)
+    {
+        RawSink.Request(Post, url, json);
+        return new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
     }
 
     // Thin specialization of PostJsonAsync for the chat/completions probes
@@ -195,11 +203,7 @@ public static class Probe
             new[] { new OpenAiMessage("user", prompt) }, MaxTokens: maxTokens, Temperature: 0, Stream: true);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiChatRequest);
         var url = $"{e}/v1/chat/completions";
-        RawSink.Request(Post, url, json);
-        var req = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
+        var req = BuildJsonPost(url, json);
         try
         {
             using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -313,84 +317,56 @@ public static class Probe
         catch { return FeatureState.No; }
     }
 
-    public static async Task<EmbedResult> EmbedAsync(
+    public static Task<EmbedResult> EmbedAsync(
         HttpClient http, string endpoint, string model, string[] input, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new OpenAiEmbeddingRequest(model, input);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiEmbeddingRequest);
-        var url = $"{e}/v1/embeddings";
-        RawSink.Request(Post, url, json);
-        var req = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            RawSink.Response((int)res.StatusCode, raw);
-            if (!res.IsSuccessStatusCode)
-                return new EmbedResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds, input.Length, 0, 0, 0, 0, Trunc(raw, 200));
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiEmbeddingResponse);
-            var first = resp?.Data.FirstOrDefault();
-            var vec = first?.Embedding ?? Array.Empty<float>();
-            return new EmbedResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                input.Length,
-                vec.Length,
-                L2Norm(vec),
-                resp?.Usage?.PromptTokens ?? 0,
-                resp?.Usage?.TotalTokens ?? 0,
-                null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            RawSink.ResponseFailed(ex.Message);
-            return new EmbedResult(e, model, false, null, sw.ElapsedMilliseconds, input.Length, 0, 0, 0, 0, ex.Message);
-        }
+        return PostJsonAsync(http, $"{e}/v1/embeddings", json, ct,
+            onError: (status, ms, raw) =>
+                new EmbedResult(e, model, false, status, ms, input.Length, 0, 0, 0, 0, Trunc(raw, 200)),
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiEmbeddingResponse);
+                var first = resp?.Data.FirstOrDefault();
+                var vec = first?.Embedding ?? Array.Empty<float>();
+                return new EmbedResult(e, model, true, status, ms,
+                    input.Length,
+                    vec.Length,
+                    L2Norm(vec),
+                    resp?.Usage?.PromptTokens ?? 0,
+                    resp?.Usage?.TotalTokens ?? 0,
+                    null);
+            },
+            onException: (ms, msg) =>
+                new EmbedResult(e, model, false, null, ms, input.Length, 0, 0, 0, 0, msg));
     }
 
-    public static async Task<RerankResult> RerankAsync(
+    public static Task<RerankResult> RerankAsync(
         HttpClient http, string endpoint, string model, string query, string[] documents, int? topN, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new OpenAiRerankRequest(model, query, documents, topN);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiRerankRequest);
-        var url = $"{e}/v1/rerank";
-        RawSink.Request(Post, url, json);
-        var req = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            RawSink.Response((int)res.StatusCode, raw);
-            if (!res.IsSuccessStatusCode)
-                return new RerankResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds, documents.Length, Array.Empty<RerankItem>(), 0, Trunc(raw, 200));
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiRerankResponse);
-            var ranking = (resp?.Results ?? Array.Empty<OpenAiRerankResultEntry>())
-                .Select(r => new RerankItem(
-                    r.Index,
-                    r.RelevanceScore,
-                    // Prefer the doc text echoed by the server; fall back to the input we sent.
-                    Trunc(r.Document?.Text ?? (r.Index >= 0 && r.Index < documents.Length ? documents[r.Index] : ""), 80)))
-                .ToArray();
-            return new RerankResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                documents.Length, ranking, resp?.Usage?.TotalTokens ?? 0, null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            RawSink.ResponseFailed(ex.Message);
-            return new RerankResult(e, model, false, null, sw.ElapsedMilliseconds, documents.Length, Array.Empty<RerankItem>(), 0, ex.Message);
-        }
+        return PostJsonAsync(http, $"{e}/v1/rerank", json, ct,
+            onError: (status, ms, raw) =>
+                new RerankResult(e, model, false, status, ms, documents.Length, Array.Empty<RerankItem>(), 0, Trunc(raw, 200)),
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiRerankResponse);
+                var ranking = (resp?.Results ?? Array.Empty<OpenAiRerankResultEntry>())
+                    .Select(r => new RerankItem(
+                        r.Index,
+                        r.RelevanceScore,
+                        // Prefer the doc text echoed by the server; fall back to the input we sent.
+                        Trunc(r.Document?.Text ?? (r.Index >= 0 && r.Index < documents.Length ? documents[r.Index] : ""), 80)))
+                    .ToArray();
+                return new RerankResult(e, model, true, status, ms,
+                    documents.Length, ranking, resp?.Usage?.TotalTokens ?? 0, null);
+            },
+            onException: (ms, msg) =>
+                new RerankResult(e, model, false, null, ms, documents.Length, Array.Empty<RerankItem>(), 0, msg));
     }
 
     public static Task<ReasoningResult> ReasoningAsync(
@@ -980,11 +956,7 @@ public static class Probe
         var sw = Stopwatch.StartNew();
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiSpeechRequest);
         var url = $"{e}/v1/audio/speech";
-        RawSink.Request(Post, url, json);
-        var req = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
+        var req = BuildJsonPost(url, json);
         try
         {
             using var res = await http.SendAsync(req, ct);
