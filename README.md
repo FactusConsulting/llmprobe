@@ -43,11 +43,11 @@ The `completions`, `infill`, `tokenize`, `logprobs`, `classify`, `transcribe` an
 ### Homebrew (macOS / Linux)
 
 ```sh
-brew tap factusconsulting/tools
+brew tap factusconsulting/tap
 brew install llmprobe
 ```
 
-The tap lives at [FactusConsulting/homebrew-tools](https://github.com/FactusConsulting/homebrew-tools); `llmprobe` is bumped there automatically on every release.
+The tap lives at [FactusConsulting/homebrew-tap](https://github.com/FactusConsulting/homebrew-tap); `llmprobe` is bumped there automatically on every release.
 
 ### Chocolatey (Windows, self-hosted feed)
 

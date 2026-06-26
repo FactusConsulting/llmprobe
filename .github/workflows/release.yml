@@ -257,7 +257,7 @@ jobs:
     # single "latest" version), so RCs are finals-only here.
     if: needs.release.outputs.is_prerelease != 'true'
     steps:
-      - name: Bump factusconsulting/homebrew-tools formula
+      - name: Bump factusconsulting/homebrew-tap formula
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           TAG: ${{ needs.release.outputs.tag }}
@@ -282,7 +282,7 @@ jobs:
           echo "linux-x64:   $linux_x64"
 
           git clone --depth 1 \
-            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/FactusConsulting/homebrew-tools.git" tap
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/FactusConsulting/homebrew-tap.git" tap
           f=tap/Formula/llmprobe.rb
           cat > "$f" <<EOF
           class Llmprobe < Formula
