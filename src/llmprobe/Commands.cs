@@ -22,12 +22,21 @@ public class GlobalSettings : CommandSettings
     [Description("Bearer token. Falls back to OPENAI_API_KEY env var if unset.")]
     public string? ApiKey { get; init; }
 
+    [CommandOption("--raw")]
+    [Description("Print the raw JSON request and response to stderr (for debugging wire traffic).")]
+    public bool Raw { get; init; }
+
     public string ResolvedApiKey() =>
         ApiKey ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "";
 
     public TimeSpan Timeout => TimeSpan.FromSeconds(TimeoutSeconds);
 
-    public void ApplyToRender() { Render.Format = Json ? OutputFormat.Json : OutputFormat.Text; Render.Quiet = Quiet; }
+    public void ApplyToRender()
+    {
+        Render.Format = Json ? OutputFormat.Json : OutputFormat.Text;
+        Render.Quiet = Quiet;
+        RawSink.Enabled = Raw;
+    }
 
     // Resolve a single-value option that may use the @-/@file convention shared by
     // the prompt/query/input options: "@-" reads (trimmed) stdin, "@file" reads a
@@ -706,6 +715,9 @@ public static class AgentGuidance
               - Use 'ping' before any other command if endpoint reachability is unknown
               - Use 'capabilities' once per endpoint to learn what features it supports
               - For latency benchmarks prefer 'stream' (TTFT is more useful than full latency)
+              - Add --raw to debug wire traffic: it prints the exact JSON request and
+                the raw response to STDERR. It composes with --json/--quiet because the
+                dump never touches stdout (so --json stdout stays clean for jq).
 
             AVOID
               - Calling 'test' or 'stream' without --max-tokens in a loop (open-ended cost)

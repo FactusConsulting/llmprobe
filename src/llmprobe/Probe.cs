@@ -20,6 +20,8 @@ public sealed class ConfigException : Exception
 
 public static class Probe
 {
+    private const string Post = "POST";
+
     // Read a user-supplied @file path, translating the unreadable-file exceptions
     // (missing/permission/security) into a ConfigException so callers can surface a
     // clean config error instead of an unhandled raw exception.
@@ -118,6 +120,7 @@ public static class Probe
         Func<long, string, TResult> onException)
     {
         var sw = Stopwatch.StartNew();
+        RawSink.Request(Post, url, requestJson);
         var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(requestJson, Encoding.UTF8, "application/json"),
@@ -128,6 +131,7 @@ public static class Probe
             sw.Stop();
             var raw = await res.Content.ReadAsStringAsync(ct);
             var status = (int)res.StatusCode;
+            RawSink.Response(status, raw);
             return res.IsSuccessStatusCode
                 ? onOk(status, sw.ElapsedMilliseconds, raw)
                 : onError(status, sw.ElapsedMilliseconds, raw);
@@ -135,6 +139,7 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return onException(sw.ElapsedMilliseconds, ex.Message);
         }
     }
@@ -189,7 +194,9 @@ public static class Probe
         var body = new OpenAiChatRequest(model,
             new[] { new OpenAiMessage("user", prompt) }, MaxTokens: maxTokens, Temperature: 0, Stream: true);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiChatRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
+        var url = $"{e}/v1/chat/completions";
+        RawSink.Request(Post, url, json);
+        var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),
         };
@@ -200,8 +207,10 @@ public static class Probe
             {
                 sw.Stop();
                 var err = await res.Content.ReadAsStringAsync(ct);
+                RawSink.Response((int)res.StatusCode, err);
                 return new StreamResult(e, model, false, 0, sw.ElapsedMilliseconds, 0, 0, 0, null, Trunc(err, 200));
             }
+            RawSink.ResponseSummary((int)res.StatusCode, "(SSE stream; raw chunks below)");
             await using var stream = await res.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream);
             string? line;
@@ -211,6 +220,7 @@ public static class Probe
                 var payload = line[5..].Trim();
                 if (payload == "[DONE]") break;
                 if (payload.Length == 0) continue;
+                RawSink.RawLine(payload);
                 try
                 {
                     var chunk = JsonSerializer.Deserialize(payload, JsonContext.Default.OpenAiStreamChunk);
@@ -236,6 +246,7 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return new StreamResult(e, model, false, ttftMs, sw.ElapsedMilliseconds, chunks, 0, 0, finish, ex.Message);
         }
     }
@@ -309,7 +320,9 @@ public static class Probe
         var sw = Stopwatch.StartNew();
         var body = new OpenAiEmbeddingRequest(model, input);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiEmbeddingRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/embeddings")
+        var url = $"{e}/v1/embeddings";
+        RawSink.Request(Post, url, json);
+        var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),
         };
@@ -318,6 +331,7 @@ public static class Probe
             using var res = await http.SendAsync(req, ct);
             sw.Stop();
             var raw = await res.Content.ReadAsStringAsync(ct);
+            RawSink.Response((int)res.StatusCode, raw);
             if (!res.IsSuccessStatusCode)
                 return new EmbedResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds, input.Length, 0, 0, 0, 0, Trunc(raw, 200));
             var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiEmbeddingResponse);
@@ -334,6 +348,7 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return new EmbedResult(e, model, false, null, sw.ElapsedMilliseconds, input.Length, 0, 0, 0, 0, ex.Message);
         }
     }
@@ -345,7 +360,9 @@ public static class Probe
         var sw = Stopwatch.StartNew();
         var body = new OpenAiRerankRequest(model, query, documents, topN);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiRerankRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/rerank")
+        var url = $"{e}/v1/rerank";
+        RawSink.Request(Post, url, json);
+        var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),
         };
@@ -354,6 +371,7 @@ public static class Probe
             using var res = await http.SendAsync(req, ct);
             sw.Stop();
             var raw = await res.Content.ReadAsStringAsync(ct);
+            RawSink.Response((int)res.StatusCode, raw);
             if (!res.IsSuccessStatusCode)
                 return new RerankResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds, documents.Length, Array.Empty<RerankItem>(), 0, Trunc(raw, 200));
             var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiRerankResponse);
@@ -370,6 +388,7 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return new RerankResult(e, model, false, null, sw.ElapsedMilliseconds, documents.Length, Array.Empty<RerankItem>(), 0, ex.Message);
         }
     }
@@ -915,14 +934,18 @@ public static class Probe
     {
         var e = Normalize(endpoint);
         var sw = Stopwatch.StartNew();
+        var url = $"{e}/v1/audio/transcriptions";
         using var content = BuildTranscriptionContent(audio, fileName, model);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/audio/transcriptions") { Content = content };
+        RawSink.RequestDescription(Post, url,
+            $"multipart/form-data: model={model}, file={fileName} ({audio.Length} bytes)");
+        var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
         try
         {
             using var res = await http.SendAsync(req, ct);
             sw.Stop();
             var raw = await res.Content.ReadAsStringAsync(ct);
             var status = (int)res.StatusCode;
+            RawSink.Response(status, raw);
             if (!res.IsSuccessStatusCode)
             {
                 var unsupported = IsUnsupportedStatus(status);
@@ -939,6 +962,7 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return new TranscribeResult(e, model, false, true, null, sw.ElapsedMilliseconds,
                 source, 0, null, null, null, ex.Message);
         }
@@ -955,7 +979,9 @@ public static class Probe
         var e = Normalize(endpoint);
         var sw = Stopwatch.StartNew();
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiSpeechRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/audio/speech")
+        var url = $"{e}/v1/audio/speech";
+        RawSink.Request(Post, url, json);
+        var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),
         };
@@ -967,6 +993,7 @@ public static class Probe
             if (!res.IsSuccessStatusCode)
             {
                 var raw = await res.Content.ReadAsStringAsync(ct);
+                RawSink.Response(status, raw);
                 var unsupported = IsUnsupportedStatus(status);
                 return new SpeakResult(e, body.Model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
                     body.Voice, body.ResponseFormat, null, 0, null,
@@ -975,6 +1002,7 @@ public static class Probe
             }
             var bytes = await res.Content.ReadAsByteArrayAsync(ct);
             var contentType = res.Content.Headers.ContentType?.ToString();
+            RawSink.ResponseSummary(status, $"binary audio: content-type={contentType ?? "?"}, {bytes.Length} bytes");
             if (outputPath != null) WriteAudioFile(outputPath, bytes);
             var note = outputPath == null
                 ? "no -o/--output given; audio not written (metadata only)"
@@ -985,6 +1013,7 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return new SpeakResult(e, body.Model, false, true, null, sw.ElapsedMilliseconds,
                 body.Voice, body.ResponseFormat, null, 0, outputPath, null, ex.Message);
         }

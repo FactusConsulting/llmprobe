@@ -5,6 +5,83 @@ namespace LlmProbe;
 
 public enum OutputFormat { Text, Json }
 
+// Wire-level debug sink for the --raw flag. When enabled it prints the exact
+// request that goes on the wire and the raw response that comes back, to STDERR
+// so it never corrupts the (machine-readable) --json stdout. The output target is
+// a swappable TextWriter so a test can capture it without intercepting the console.
+public static class RawSink
+{
+    public static bool Enabled { get; set; }
+    public static TextWriter Out { get; set; } = Console.Error;
+
+    private const string ReqArrow = "→";
+    private const string ResArrow = "←";
+
+    private static readonly JsonSerializerOptions RawJsonOptions = new() { WriteIndented = true };
+
+    // Pretty-print JSON when it parses; otherwise emit it verbatim (raw-as-sent is
+    // more honest than failing to reformat a body the server will actually receive).
+    private static string Pretty(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return JsonSerializer.Serialize(doc.RootElement, RawJsonOptions);
+        }
+        catch (JsonException)
+        {
+            return json;
+        }
+    }
+
+    public static void Request(string method, string url, string json)
+    {
+        if (!Enabled) return;
+        Out.WriteLine($"{ReqArrow} {method} {url}");
+        Out.WriteLine(Pretty(json));
+    }
+
+    // Variant for non-JSON request bodies (multipart, etc.): the caller supplies a
+    // human description of the parts rather than a JSON string to pretty-print.
+    public static void RequestDescription(string method, string url, string description)
+    {
+        if (!Enabled) return;
+        Out.WriteLine($"{ReqArrow} {method} {url}");
+        Out.WriteLine(description);
+    }
+
+    public static void Response(int status, string body)
+    {
+        if (!Enabled) return;
+        Out.WriteLine($"{ResArrow} {status}");
+        Out.WriteLine(Pretty(body));
+    }
+
+    // Variant for non-text responses (binary audio, SSE streams): the caller
+    // supplies a summary line instead of a body to pretty-print.
+    public static void ResponseSummary(int status, string summary)
+    {
+        if (!Enabled) return;
+        Out.WriteLine($"{ResArrow} {status}");
+        Out.WriteLine(summary);
+    }
+
+    // A single raw line (e.g. one SSE chunk payload), emitted verbatim.
+    public static void RawLine(string line)
+    {
+        if (!Enabled) return;
+        Out.WriteLine(line);
+    }
+
+    // Transport failure (no HTTP response): note it so a --raw run still records
+    // that the request was attempted.
+    public static void ResponseFailed(string message)
+    {
+        if (!Enabled) return;
+        Out.WriteLine($"{ResArrow} (no response: {message})");
+    }
+}
+
 public static class Render
 {
     public static OutputFormat Format { get; set; } = OutputFormat.Text;

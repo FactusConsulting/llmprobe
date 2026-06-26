@@ -935,6 +935,122 @@ public class SpeakTests
     }
 }
 
+// RawSink is process-global static state, so the two classes that mutate it run in
+// one non-parallel collection to avoid racing each other (and any other probe test).
+[CollectionDefinition("raw-sink", DisableParallelization = true)]
+public sealed class RawSinkCollection { }
+
+// The --raw debug sink writes to a swappable TextWriter. Each test points it at a
+// StringWriter and restores the defaults on dispose, so the static state can't leak
+// into other tests.
+[Collection("raw-sink")]
+public sealed class RawSinkTests : IDisposable
+{
+    private readonly StringWriter _sw = new();
+
+    public RawSinkTests()
+    {
+        RawSink.Enabled = true;
+        RawSink.Out = _sw;
+    }
+
+    public void Dispose()
+    {
+        RawSink.Enabled = false;
+        RawSink.Out = Console.Error;
+        _sw.Dispose();
+    }
+
+    [Fact]
+    public async Task ChatTestAsync_EmitsRequestAndResponseToSink_WhenEnabled()
+    {
+        var handler = new StubHandler(_ =>
+            new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                { "choices": [{ "message": { "role": "assistant", "content": "ok" }, "finish_reason": "stop" }] }
+                """),
+            });
+        using var http = new HttpClient(handler);
+        await Probe.ChatTestAsync(http, "http://infer:8080", "m", "hi", 16, default);
+
+        var output = _sw.ToString();
+        Assert.Contains("POST http://infer:8080/v1/chat/completions", output);
+        Assert.Contains("\"content\": \"hi\"", output);   // request body (pretty-printed)
+        Assert.Contains("← 200", output);
+        Assert.Contains("\"content\": \"ok\"", output);   // response body
+    }
+
+    [Fact]
+    public async Task SpeakAsync_SummarizesBinaryResponse_WhenEnabled()
+    {
+        var audio = new byte[] { 0x49, 0x44, 0x33, 0x04, 0x00 };
+        var handler = new StubHandler(_ =>
+        {
+            var res = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            { Content = new ByteArrayContent(audio) };
+            res.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
+            return res;
+        });
+        using var http = new HttpClient(handler);
+        await Probe.SpeakAsync(http, "http://infer:8080",
+            new OpenAiSpeechRequest("tts-1", "Hej", "alloy", "mp3"), null, default);
+
+        var output = _sw.ToString();
+        Assert.Contains("POST http://infer:8080/v1/audio/speech", output);
+        Assert.Contains("binary audio", output);
+        Assert.Contains("audio/mpeg", output);
+        Assert.Contains($"{audio.Length} bytes", output);
+    }
+
+    [Fact]
+    public async Task TranscribeAsync_DescribesMultipartParts_WhenEnabled()
+    {
+        var handler = new StubHandler(_ =>
+            new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            { Content = new StringContent("""{ "text": "hi" }""") });
+        using var http = new HttpClient(handler);
+        await Probe.TranscribeAsync(http, "http://infer:8080", "whisper-1",
+            new byte[] { 1, 2, 3 }, "speech.wav", "./speech.wav", default);
+
+        var output = _sw.ToString();
+        Assert.Contains("multipart/form-data", output);
+        Assert.Contains("file=speech.wav", output);
+        Assert.Contains("model=whisper-1", output);
+        Assert.Contains("\"text\": \"hi\"", output);
+    }
+}
+
+[Collection("raw-sink")]
+public sealed class RawSinkDisabledTests : IDisposable
+{
+    private readonly StringWriter _sw = new();
+
+    public RawSinkDisabledTests()
+    {
+        RawSink.Enabled = false;   // off by default
+        RawSink.Out = _sw;
+    }
+
+    public void Dispose()
+    {
+        RawSink.Out = Console.Error;
+        _sw.Dispose();
+    }
+
+    [Fact]
+    public async Task ChatTestAsync_EmitsNothing_WhenDisabled()
+    {
+        var handler = new StubHandler(_ =>
+            new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            { Content = new StringContent("""{ "choices": [] }""") });
+        using var http = new HttpClient(handler);
+        await Probe.ChatTestAsync(http, "http://infer:8080", "m", "hi", 16, default);
+
+        Assert.Equal("", _sw.ToString());
+    }
+}
+
 // Minimal stubbed HttpMessageHandler so the audio probes can be exercised against
 // an in-memory response without a live server.
 internal sealed class StubHandler : HttpMessageHandler

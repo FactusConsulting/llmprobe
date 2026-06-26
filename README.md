@@ -324,6 +324,44 @@ the audio is written to that file (a write failure is a config error, exit `78`)
 without it, only metadata is reported (the binary is never dumped to the terminal).
 On an endpoint without the route, `supported` is `no` (exit `0`).
 
+### See the wire traffic (`--raw`)
+
+`--raw` is a global flag available on every command that makes an HTTP call. It
+prints the exact JSON request body sent to the endpoint and the raw response body
+received — to **stderr**, so `--json` stdout stays clean and machine-readable.
+
+```sh
+$ llmprobe test http://infer:8000 -p hi --raw
+→ POST http://infer:8000/v1/chat/completions
+{
+  "model": "default",
+  "messages": [
+    { "role": "user", "content": "hi" }
+  ],
+  "max_tokens": 16,
+  "temperature": 0
+}
+← 200
+{
+  "choices": [ { "message": { "role": "assistant", "content": "ok" }, "finish_reason": "stop" } ],
+  "usage": { "prompt_tokens": 8, "completion_tokens": 1, "total_tokens": 9 }
+}
+```
+
+Because the dump goes to stderr, it composes with `--json` and `--quiet`:
+
+```sh
+# Clean JSON on stdout, wire trace on stderr (here discarded)
+llmprobe test http://infer:8000 -p hi --raw --json 2>/dev/null | jq .ok
+
+# Capture only the wire trace
+llmprobe test http://infer:8000 -p hi --raw --json 1>/dev/null
+```
+
+Streaming dumps the request plus each raw SSE chunk; multipart `transcribe`
+describes the parts (model + file name/size); binary `speak` summarizes the
+response (content-type + byte count) instead of dumping audio bytes.
+
 ### Compose with shell
 
 ```sh
@@ -433,6 +471,7 @@ Field names are part of the public contract — they won't change in patch/minor
 | `--quiet` | Minimal output ("ok" / "fail" + exit code) |
 | `--timeout <SEC>` | HTTP timeout (default 30s) |
 | `--api-key <KEY>` | Bearer token. Falls back to `OPENAI_API_KEY` env var |
+| `--raw` | Print the raw JSON request and response to **stderr** (wire-level debugging) |
 
 ## License
 
