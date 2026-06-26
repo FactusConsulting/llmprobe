@@ -20,6 +20,8 @@ public sealed class ConfigException : Exception
 
 public static class Probe
 {
+    private const string Post = "POST";
+
     // Read a user-supplied @file path, translating the unreadable-file exceptions
     // (missing/permission/security) into a ConfigException so callers can surface a
     // clean config error instead of an unhandled raw exception.
@@ -118,16 +120,14 @@ public static class Probe
         Func<long, string, TResult> onException)
     {
         var sw = Stopwatch.StartNew();
-        var req = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(requestJson, Encoding.UTF8, "application/json"),
-        };
+        var req = BuildJsonPost(url, requestJson);
         try
         {
             using var res = await http.SendAsync(req, ct);
             sw.Stop();
             var raw = await res.Content.ReadAsStringAsync(ct);
             var status = (int)res.StatusCode;
+            RawSink.Response(status, raw);
             return res.IsSuccessStatusCode
                 ? onOk(status, sw.ElapsedMilliseconds, raw)
                 : onError(status, sw.ElapsedMilliseconds, raw);
@@ -135,8 +135,21 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return onException(sw.ElapsedMilliseconds, ex.Message);
         }
+    }
+
+    // Build the POST request for a JSON body, mirroring it to the --raw sink first.
+    // Shared by PostJsonAsync and the probes that can't use that skeleton (streaming
+    // SSE, binary audio) but still send an ordinary JSON request.
+    private static HttpRequestMessage BuildJsonPost(string url, string json)
+    {
+        RawSink.Request(Post, url, json);
+        return new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
     }
 
     // Thin specialization of PostJsonAsync for the chat/completions probes
@@ -189,10 +202,8 @@ public static class Probe
         var body = new OpenAiChatRequest(model,
             new[] { new OpenAiMessage("user", prompt) }, MaxTokens: maxTokens, Temperature: 0, Stream: true);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiChatRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/chat/completions")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
+        var url = $"{e}/v1/chat/completions";
+        var req = BuildJsonPost(url, json);
         try
         {
             using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -200,8 +211,10 @@ public static class Probe
             {
                 sw.Stop();
                 var err = await res.Content.ReadAsStringAsync(ct);
+                RawSink.Response((int)res.StatusCode, err);
                 return new StreamResult(e, model, false, 0, sw.ElapsedMilliseconds, 0, 0, 0, null, Trunc(err, 200));
             }
+            RawSink.ResponseSummary((int)res.StatusCode, "(SSE stream; raw chunks below)");
             await using var stream = await res.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream);
             string? line;
@@ -211,6 +224,7 @@ public static class Probe
                 var payload = line[5..].Trim();
                 if (payload == "[DONE]") break;
                 if (payload.Length == 0) continue;
+                RawSink.RawLine(payload);
                 try
                 {
                     var chunk = JsonSerializer.Deserialize(payload, JsonContext.Default.OpenAiStreamChunk);
@@ -236,6 +250,7 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return new StreamResult(e, model, false, ttftMs, sw.ElapsedMilliseconds, chunks, 0, 0, finish, ex.Message);
         }
     }
@@ -302,76 +317,56 @@ public static class Probe
         catch { return FeatureState.No; }
     }
 
-    public static async Task<EmbedResult> EmbedAsync(
+    public static Task<EmbedResult> EmbedAsync(
         HttpClient http, string endpoint, string model, string[] input, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new OpenAiEmbeddingRequest(model, input);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiEmbeddingRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/embeddings")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode)
-                return new EmbedResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds, input.Length, 0, 0, 0, 0, Trunc(raw, 200));
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiEmbeddingResponse);
-            var first = resp?.Data.FirstOrDefault();
-            var vec = first?.Embedding ?? Array.Empty<float>();
-            return new EmbedResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                input.Length,
-                vec.Length,
-                L2Norm(vec),
-                resp?.Usage?.PromptTokens ?? 0,
-                resp?.Usage?.TotalTokens ?? 0,
-                null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new EmbedResult(e, model, false, null, sw.ElapsedMilliseconds, input.Length, 0, 0, 0, 0, ex.Message);
-        }
+        return PostJsonAsync(http, $"{e}/v1/embeddings", json, ct,
+            onError: (status, ms, raw) =>
+                new EmbedResult(e, model, false, status, ms, input.Length, 0, 0, 0, 0, Trunc(raw, 200)),
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiEmbeddingResponse);
+                var first = resp?.Data.FirstOrDefault();
+                var vec = first?.Embedding ?? Array.Empty<float>();
+                return new EmbedResult(e, model, true, status, ms,
+                    input.Length,
+                    vec.Length,
+                    L2Norm(vec),
+                    resp?.Usage?.PromptTokens ?? 0,
+                    resp?.Usage?.TotalTokens ?? 0,
+                    null);
+            },
+            onException: (ms, msg) =>
+                new EmbedResult(e, model, false, null, ms, input.Length, 0, 0, 0, 0, msg));
     }
 
-    public static async Task<RerankResult> RerankAsync(
+    public static Task<RerankResult> RerankAsync(
         HttpClient http, string endpoint, string model, string query, string[] documents, int? topN, CancellationToken ct)
     {
         var e = Normalize(endpoint);
-        var sw = Stopwatch.StartNew();
         var body = new OpenAiRerankRequest(model, query, documents, topN);
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiRerankRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/rerank")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-        try
-        {
-            using var res = await http.SendAsync(req, ct);
-            sw.Stop();
-            var raw = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode)
-                return new RerankResult(e, model, false, (int)res.StatusCode, sw.ElapsedMilliseconds, documents.Length, Array.Empty<RerankItem>(), 0, Trunc(raw, 200));
-            var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiRerankResponse);
-            var ranking = (resp?.Results ?? Array.Empty<OpenAiRerankResultEntry>())
-                .Select(r => new RerankItem(
-                    r.Index,
-                    r.RelevanceScore,
-                    // Prefer the doc text echoed by the server; fall back to the input we sent.
-                    Trunc(r.Document?.Text ?? (r.Index >= 0 && r.Index < documents.Length ? documents[r.Index] : ""), 80)))
-                .ToArray();
-            return new RerankResult(e, model, true, (int)res.StatusCode, sw.ElapsedMilliseconds,
-                documents.Length, ranking, resp?.Usage?.TotalTokens ?? 0, null);
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new RerankResult(e, model, false, null, sw.ElapsedMilliseconds, documents.Length, Array.Empty<RerankItem>(), 0, ex.Message);
-        }
+        return PostJsonAsync(http, $"{e}/v1/rerank", json, ct,
+            onError: (status, ms, raw) =>
+                new RerankResult(e, model, false, status, ms, documents.Length, Array.Empty<RerankItem>(), 0, Trunc(raw, 200)),
+            onOk: (status, ms, raw) =>
+            {
+                var resp = JsonSerializer.Deserialize(raw, JsonContext.Default.OpenAiRerankResponse);
+                var ranking = (resp?.Results ?? Array.Empty<OpenAiRerankResultEntry>())
+                    .Select(r => new RerankItem(
+                        r.Index,
+                        r.RelevanceScore,
+                        // Prefer the doc text echoed by the server; fall back to the input we sent.
+                        Trunc(r.Document?.Text ?? (r.Index >= 0 && r.Index < documents.Length ? documents[r.Index] : ""), 80)))
+                    .ToArray();
+                return new RerankResult(e, model, true, status, ms,
+                    documents.Length, ranking, resp?.Usage?.TotalTokens ?? 0, null);
+            },
+            onException: (ms, msg) =>
+                new RerankResult(e, model, false, null, ms, documents.Length, Array.Empty<RerankItem>(), 0, msg));
     }
 
     public static Task<ReasoningResult> ReasoningAsync(
@@ -915,14 +910,18 @@ public static class Probe
     {
         var e = Normalize(endpoint);
         var sw = Stopwatch.StartNew();
+        var url = $"{e}/v1/audio/transcriptions";
         using var content = BuildTranscriptionContent(audio, fileName, model);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/audio/transcriptions") { Content = content };
+        RawSink.RequestDescription(Post, url,
+            $"multipart/form-data: model={model}, file={fileName} ({audio.Length} bytes)");
+        var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
         try
         {
             using var res = await http.SendAsync(req, ct);
             sw.Stop();
             var raw = await res.Content.ReadAsStringAsync(ct);
             var status = (int)res.StatusCode;
+            RawSink.Response(status, raw);
             if (!res.IsSuccessStatusCode)
             {
                 var unsupported = IsUnsupportedStatus(status);
@@ -939,6 +938,7 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return new TranscribeResult(e, model, false, true, null, sw.ElapsedMilliseconds,
                 source, 0, null, null, null, ex.Message);
         }
@@ -955,10 +955,8 @@ public static class Probe
         var e = Normalize(endpoint);
         var sw = Stopwatch.StartNew();
         var json = JsonSerializer.Serialize(body, JsonContext.Default.OpenAiSpeechRequest);
-        var req = new HttpRequestMessage(HttpMethod.Post, $"{e}/v1/audio/speech")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
+        var url = $"{e}/v1/audio/speech";
+        var req = BuildJsonPost(url, json);
         try
         {
             using var res = await http.SendAsync(req, ct);
@@ -967,6 +965,7 @@ public static class Probe
             if (!res.IsSuccessStatusCode)
             {
                 var raw = await res.Content.ReadAsStringAsync(ct);
+                RawSink.Response(status, raw);
                 var unsupported = IsUnsupportedStatus(status);
                 return new SpeakResult(e, body.Model, unsupported, !unsupported, status, sw.ElapsedMilliseconds,
                     body.Voice, body.ResponseFormat, null, 0, null,
@@ -975,6 +974,7 @@ public static class Probe
             }
             var bytes = await res.Content.ReadAsByteArrayAsync(ct);
             var contentType = res.Content.Headers.ContentType?.ToString();
+            RawSink.ResponseSummary(status, $"binary audio: content-type={contentType ?? "?"}, {bytes.Length} bytes");
             if (outputPath != null) WriteAudioFile(outputPath, bytes);
             var note = outputPath == null
                 ? "no -o/--output given; audio not written (metadata only)"
@@ -985,6 +985,7 @@ public static class Probe
         catch (Exception ex)
         {
             sw.Stop();
+            RawSink.ResponseFailed(ex.Message);
             return new SpeakResult(e, body.Model, false, true, null, sw.ElapsedMilliseconds,
                 body.Voice, body.ResponseFormat, null, 0, outputPath, null, ex.Message);
         }
