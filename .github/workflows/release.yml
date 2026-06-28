@@ -34,7 +34,7 @@ jobs:
           - target: win-x64
             os: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -113,7 +113,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       is_prerelease: ${{ steps.resolve.outputs.is_prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve tag
         id: resolve
@@ -152,7 +152,7 @@ jobs:
       contents: write   # gh-pages push for the Sleet feed
       packages: write    # GitHub Packages NuGet push
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
