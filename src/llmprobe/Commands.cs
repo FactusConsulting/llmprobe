@@ -172,7 +172,7 @@ public sealed class StructuredSettings : PromptSettings
 
 public sealed class ReasoningCommand : AsyncCommand<ReasoningSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, ReasoningSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, ReasoningSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -187,7 +187,7 @@ public sealed class ReasoningCommand : AsyncCommand<ReasoningSettings>
 
 public sealed class StructuredCommand : AsyncCommand<StructuredSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, StructuredSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, StructuredSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -234,7 +234,7 @@ public sealed class ToolsSettings : PromptSettings
 
 public sealed class VisionCommand : AsyncCommand<VisionSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, VisionSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, VisionSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         // Spectre does not enforce the C# `required` modifier, so a missing -i
@@ -269,7 +269,7 @@ public sealed class VisionCommand : AsyncCommand<VisionSettings>
 
 public sealed class ToolsCommand : AsyncCommand<ToolsSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, ToolsSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, ToolsSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -284,7 +284,7 @@ public sealed class ToolsCommand : AsyncCommand<ToolsSettings>
 
 public sealed class PingCommand : AsyncCommand<EndpointSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s)
+    protected override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
@@ -296,7 +296,7 @@ public sealed class PingCommand : AsyncCommand<EndpointSettings>
 
 public sealed class ModelsCommand : AsyncCommand<EndpointSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s)
+    protected override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
@@ -309,7 +309,7 @@ public sealed class ModelsCommand : AsyncCommand<EndpointSettings>
 
 public sealed class TestCommand : AsyncCommand<ChatSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, ChatSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, ChatSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -324,7 +324,7 @@ public sealed class TestCommand : AsyncCommand<ChatSettings>
 
 public sealed class StreamCommand : AsyncCommand<ChatSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, ChatSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, ChatSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -339,7 +339,7 @@ public sealed class StreamCommand : AsyncCommand<ChatSettings>
 
 public sealed class EmbedCommand : AsyncCommand<EmbedSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, EmbedSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, EmbedSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -354,7 +354,7 @@ public sealed class EmbedCommand : AsyncCommand<EmbedSettings>
 
 public sealed class RerankCommand : AsyncCommand<RerankSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, RerankSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, RerankSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         // Spectre does not enforce the C# `required` modifier, so a missing -q
@@ -387,7 +387,7 @@ public sealed class RerankCommand : AsyncCommand<RerankSettings>
 
 public sealed class CapabilitiesCommand : AsyncCommand<EndpointSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s)
+    protected override async Task<int> ExecuteAsync(CommandContext context, EndpointSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         using var http = Probe.CreateClient(s.ResolvedApiKey(), s.Timeout);
@@ -486,7 +486,7 @@ public sealed class ClassifySettings : EndpointSettings
 
 public sealed class CompletionsCommand : AsyncCommand<CompletionsSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, CompletionsSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, CompletionsSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -504,7 +504,7 @@ public sealed class CompletionsCommand : AsyncCommand<CompletionsSettings>
 
 public sealed class InfillCommand : AsyncCommand<InfillSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, InfillSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, InfillSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -521,7 +521,7 @@ public sealed class InfillCommand : AsyncCommand<InfillSettings>
 
 public sealed class TokenizeCommand : AsyncCommand<TokenizeSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, TokenizeSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, TokenizeSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -536,7 +536,7 @@ public sealed class TokenizeCommand : AsyncCommand<TokenizeSettings>
 
 public sealed class LogprobsCommand : AsyncCommand<LogprobsSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, LogprobsSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, LogprobsSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -551,7 +551,7 @@ public sealed class LogprobsCommand : AsyncCommand<LogprobsSettings>
 
 public sealed class ClassifyCommand : AsyncCommand<ClassifySettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, ClassifySettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, ClassifySettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -613,7 +613,7 @@ public sealed class SpeakSettings : EndpointSettings
 
 public sealed class TranscribeCommand : AsyncCommand<TranscribeSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, TranscribeSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, TranscribeSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         // Spectre does not enforce the C# `required` modifier, so a missing -f
@@ -639,7 +639,7 @@ public sealed class TranscribeCommand : AsyncCommand<TranscribeSettings>
 
 public sealed class SpeakCommand : AsyncCommand<SpeakSettings>
 {
-    public override Task<int> ExecuteAsync(CommandContext context, SpeakSettings s)
+    protected override Task<int> ExecuteAsync(CommandContext context, SpeakSettings s, CancellationToken cancellationToken)
     {
         s.ApplyToRender();
         return CommandRunner.GuardConfig(async () =>
@@ -760,7 +760,7 @@ public static class AgentGuidance
 
 public sealed class HelpAiCommand : Command
 {
-    public override int Execute(CommandContext ctx)
+    protected override int Execute(CommandContext ctx, CancellationToken cancellationToken)
     {
         Console.WriteLine(AgentGuidance.Text);
         return 0;
