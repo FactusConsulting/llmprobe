@@ -27,10 +27,18 @@ jobs:
             os: ubuntu-latest
           - target: linux-arm64
             os: ubuntu-latest
+          # Built on Linux, not macOS. This publish is PublishSingleFile with
+          # --self-contained and no AOT, so it bundles the osx runtime pack
+          # that NuGet fetches -- nothing has to execute on a Mac. The test
+          # step already skips these targets, so nothing is lost.
+          #
+          # macOS is the only runner GitHub bills us for at full price: it
+          # cannot be self-hosted without Apple hardware, and it cost 25.85 USD
+          # across these three repos before this change. Linux runners are ours.
           - target: osx-x64
-            os: macos-latest
+            os: ubuntu-latest
           - target: osx-arm64
-            os: macos-latest
+            os: ubuntu-latest
           - target: win-x64
             os: windows-latest
     steps:
