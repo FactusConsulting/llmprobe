@@ -105,6 +105,13 @@ jobs:
             ${{ env.APP_NAME }}-${{ matrix.target }}.tar.gz
             ${{ env.APP_NAME }}-${{ matrix.target }}.zip
           if-no-files-found: ignore
+          # These exist only to hand the binary from the matrix job to the
+          # release job a few minutes later; the release itself keeps the real
+          # copy, permanently and for free. The org default is 7 days, which
+          # billed ~800 MB per repo per release -- GigabyteHours accrue for as
+          # long as a file exists, so the cost is the retention, not the upload.
+          # One day is the floor GitHub allows.
+          retention-days: 1
 
   release:
     name: Release
