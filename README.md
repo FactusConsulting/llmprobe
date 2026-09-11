@@ -40,7 +40,7 @@ The `completions`, `infill`, `tokenize`, `logprobs`, `classify`, `transcribe` an
 
 ## Install
 
-### Homebrew (macOS / Linux)
+### Homebrew (Linux)
 
 ```sh
 brew tap factusconsulting/tap
@@ -67,8 +67,10 @@ single self-contained `llmprobe.exe` and shims it onto your `PATH`.
 Download from [Releases](https://github.com/FactusConsulting/llmprobe/releases) — single-file binaries for:
 
 - Linux x64 / arm64
-- macOS x64 / arm64 (Apple Silicon)
 - Windows x64
+
+macOS is not built. The binaries are self-contained, so a Mac would need one of
+its own, and nothing here runs macOS.
 
 Unpack and move to `~/bin/` or `/usr/local/bin/`. No runtime needed (AOT-compiled).
 
