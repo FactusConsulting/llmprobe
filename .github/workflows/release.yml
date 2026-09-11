@@ -27,20 +27,20 @@ jobs:
             os: ubuntu-latest
           - target: linux-arm64
             os: ubuntu-latest
-          # Built on Linux, not macOS. This publish is PublishSingleFile with
-          # --self-contained and no AOT, so it bundles the osx runtime pack
-          # that NuGet fetches -- nothing has to execute on a Mac. The test
-          # step already skips these targets, so nothing is lost.
-          #
-          # macOS is the only runner GitHub bills us for at full price: it
-          # cannot be self-hosted without Apple hardware, and it cost 25.85 USD
-          # across these three repos before this change. Linux runners are ours.
-          - target: osx-x64
-            os: ubuntu-latest
-          - target: osx-arm64
-            os: ubuntu-latest
           - target: win-x64
             os: windows-latest
+          # No osx-x64 or osx-arm64. They were cross-compiled here on Linux for
+          # a while -- PublishSingleFile without AOT bundles the osx runtime
+          # pack NuGet fetches, so nothing had to execute on a Mac -- but a
+          # target nobody here runs still has to be released, checksummed and
+          # carried in the tap formula. macOS support is dropped rather than
+          # shipped untested: every machine that consumes these binaries runs
+          # Linux or Windows.
+          #
+          # Restoring it is this block plus the osx branch of the Homebrew
+          # formula below. Do not restore `os: macos-latest` with it: macOS is
+          # the one runner GitHub bills at full price and cannot be
+          # self-hosted, and it cost 25.85 USD across these three repos.
     steps:
       - uses: actions/checkout@v7
 
@@ -287,12 +287,8 @@ jobs:
           sha() {
             curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$base/llmprobe-$1.tar.gz" | sha256sum | cut -d' ' -f1
           }
-          osx_arm64=$(sha osx-arm64)
-          osx_x64=$(sha osx-x64)
           linux_arm64=$(sha linux-arm64)
           linux_x64=$(sha linux-x64)
-          echo "osx-arm64:   $osx_arm64"
-          echo "osx-x64:     $osx_x64"
           echo "linux-arm64: $linux_arm64"
           echo "linux-x64:   $linux_x64"
 
@@ -306,17 +302,10 @@ jobs:
             version "${VERSION}"
             license "MIT"
 
-            on_macos do
-              on_arm do
-                url "${base}/llmprobe-osx-arm64.tar.gz"
-                sha256 "${osx_arm64}"
-              end
-              on_intel do
-                url "${base}/llmprobe-osx-x64.tar.gz"
-                sha256 "${osx_x64}"
-              end
-            end
-
+            # Linux only. The tap is still the right place for this formula
+            # -- Homebrew runs on Linux -- but the release carries no macOS
+            # binary to point at, so there is no on_macos block. `brew install`
+            # on a Mac fails with "not available", which is the truth.
             on_linux do
               on_arm do
                 url "${base}/llmprobe-linux-arm64.tar.gz"
