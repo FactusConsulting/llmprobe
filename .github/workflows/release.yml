@@ -18,17 +18,17 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: linux-x64
-            os: ubuntu-latest
+            runner: arc-runner
           - target: linux-arm64
-            os: ubuntu-latest
+            runner: arc-runner
           - target: win-x64
-            os: windows-latest
+            runner: windows-latest
           # No osx-x64 or osx-arm64. They were cross-compiled here on Linux for
           # a while -- PublishSingleFile without AOT bundles the osx runtime
           # pack NuGet fetches, so nothing had to execute on a Mac -- but a
@@ -38,7 +38,7 @@ jobs:
           # Linux or Windows.
           #
           # Restoring it is this block plus the osx branch of the Homebrew
-          # formula below. Do not restore `os: macos-latest` with it: macOS is
+          # formula below. Do not restore `runner: macos-latest` with it: macOS is
           # the one runner GitHub bills at full price and cannot be
           # self-hosted, and it cost 25.85 USD across these three repos.
     steps:
@@ -116,7 +116,7 @@ jobs:
   release:
     name: Release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: arc-runner
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
@@ -267,7 +267,7 @@ jobs:
   homebrew:
     name: Bump Homebrew tap
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: arc-runner
     # Skip on prerelease: Homebrew has no prerelease channel (the tap formula is a
     # single "latest" version), so RCs are finals-only here.
     if: needs.release.outputs.is_prerelease != 'true'
