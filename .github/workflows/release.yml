@@ -18,17 +18,15 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: linux-x64
-            os: ubuntu-latest
+            runner: arc-runner-public
           - target: linux-arm64
-            os: ubuntu-latest
-          - target: win-x64
-            os: windows-latest
+            runner: arc-runner-public
           # No osx-x64 or osx-arm64. They were cross-compiled here on Linux for
           # a while -- PublishSingleFile without AOT bundles the osx runtime
           # pack NuGet fetches, so nothing had to execute on a Mac -- but a
@@ -38,14 +36,21 @@ jobs:
           # Linux or Windows.
           #
           # Restoring it is this block plus the osx branch of the Homebrew
-          # formula below. Do not restore `os: macos-latest` with it: macOS is
+          # formula below. Do not restore `runner: macos-latest` with it: macOS is
           # the one runner GitHub bills at full price and cannot be
           # self-hosted, and it cost 25.85 USD across these three repos.
+          #
+          # Likewise no win-x64: all CI runs on the self-hosted Linux runners
+          # and no Windows runner is used, so the Windows zip and the
+          # Chocolatey package are no longer built or published.
     steps:
       - uses: actions/checkout@v7
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v6
+        env:
+          # The ARC runner user cannot write the default /usr/share/dotnet.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           global-json-file: global.json
 
@@ -62,7 +67,7 @@ jobs:
           echo "Building with version: $v"
 
       - name: Test (unit only, skip integration)
-        if: matrix.target == 'linux-x64' || matrix.target == 'win-x64'
+        if: matrix.target == 'linux-x64'
         run: dotnet test tests/${{ env.APP_NAME }}.Tests/${{ env.APP_NAME }}.Tests.csproj -c Release --filter "Category!=Integration" --logger "console;verbosity=normal"
         shell: bash
 
@@ -83,18 +88,10 @@ jobs:
             -o publish/${{ matrix.target }}
         shell: bash
 
-      - name: Package (tar.gz on Unix)
-        if: matrix.target != 'win-x64'
+      - name: Package (tar.gz)
         run: |
           cd publish/${{ matrix.target }}
           tar -czf ../../${{ env.APP_NAME }}-${{ matrix.target }}.tar.gz ${{ env.APP_NAME }}
-        shell: bash
-
-      - name: Package (zip on Windows)
-        if: matrix.target == 'win-x64'
-        run: |
-          cd publish/${{ matrix.target }}
-          7z a ../../${{ env.APP_NAME }}-${{ matrix.target }}.zip ${{ env.APP_NAME }}.exe
         shell: bash
 
       - name: Upload artifact
@@ -103,7 +100,6 @@ jobs:
           name: ${{ env.APP_NAME }}-${{ matrix.target }}
           path: |
             ${{ env.APP_NAME }}-${{ matrix.target }}.tar.gz
-            ${{ env.APP_NAME }}-${{ matrix.target }}.zip
           if-no-files-found: ignore
           # These exist only to hand the binary from the matrix job to the
           # release job a few minutes later; the release itself keeps the real
@@ -116,13 +112,13 @@ jobs:
   release:
     name: Release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: arc-runner-public
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     outputs:
-      # Resolved once from the tag and consumed by the downstream chocolatey /
-      # homebrew jobs. is_prerelease gates the finals-only Homebrew bump so an RC
+      # Resolved once from the tag and consumed by the downstream
+      # homebrew job. is_prerelease gates the finals-only Homebrew bump so an RC
       # tag (vX.Y.Z-rc.N) never moves the single-version tap formula.
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
@@ -157,117 +153,11 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
-            dist/*.zip
-
-  chocolatey:
-    name: Chocolatey
-    needs: release
-    runs-on: windows-latest
-    permissions:
-      contents: write   # gh-pages push for the Sleet feed
-      packages: write    # GitHub Packages NuGet push
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ env.APP_NAME }}-win-x64
-          path: dist
-
-      - name: Build Chocolatey package
-        shell: pwsh
-        env:
-          VERSION: ${{ needs.release.outputs.version }}
-          TAG: ${{ needs.release.outputs.tag }}
-        run: |
-          $version = $env:VERSION
-          $tag     = $env:TAG
-          $repo    = "${{ github.repository }}"
-          $zipName = "$($env:APP_NAME)-win-x64.zip"
-          $zip     = Join-Path dist $zipName
-          if (-not (Test-Path $zip)) { throw "Windows zip asset not found: $zip" }
-          $checksum = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          Write-Host "win-x64 zip sha256: $checksum"
-
-          # The package downloads the same zip from the published GitHub release.
-          $url64 = "https://github.com/$repo/releases/download/$tag/$zipName"
-
-          $packageDir = "Output\chocolatey\llmprobe"
-          Remove-Item $packageDir -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force "$packageDir\tools" | Out-Null
-          Copy-Item packaging\windows\chocolatey\tools\*.ps1 "$packageDir\tools\"
-
-          $nuspec = Get-Content packaging\windows\chocolatey\llmprobe.nuspec -Raw
-          $nuspec = $nuspec.Replace('__VERSION__', $version)
-          Set-Content "$packageDir\llmprobe.nuspec" $nuspec -Encoding utf8
-
-          $install = Get-Content "$packageDir\tools\chocolateyinstall.ps1" -Raw
-          $install = $install.Replace('__URL64__', $url64)
-          $install = $install.Replace('__CHECKSUM64__', $checksum)
-          Set-Content "$packageDir\tools\chocolateyinstall.ps1" $install -Encoding utf8
-
-          choco pack "$packageDir\llmprobe.nuspec" --outputdirectory Output
-          if ($LASTEXITCODE -ne 0) { throw "choco pack failed" }
-
-      - name: Upload Chocolatey package to release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release.outputs.tag }}
-        run: |
-          gh release upload "$TAG" Output/*.nupkg --repo "$GITHUB_REPOSITORY" --clobber
-
-      - name: Publish Chocolatey package to GitHub Packages NuGet
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $package = Get-ChildItem Output\llmprobe.*.nupkg | Select-Object -First 1
-          if (-not $package) { throw "Chocolatey package was not built" }
-          $source = "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
-          dotnet nuget push $package.FullName --api-key "$env:GH_TOKEN" --source "$source" --skip-duplicate
-
-      # Publishes to the public Sleet feed on gh-pages. publish-chocolatey-feed.ps1
-      # pushes the single .nupkg; Sleet keeps every prior version, so the feed
-      # accumulates releases idempotently.
-      - name: Publish public Chocolatey feed to GitHub Pages
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $package = Get-ChildItem Output\llmprobe.*.nupkg | Select-Object -First 1
-          if (-not $package) { throw "Chocolatey package was not built" }
-          .\scripts\windows\publish-chocolatey-feed.ps1 -PackagePath $package.FullName
-
-      - name: Publish Chocolatey package to private NuGet feed
-        shell: pwsh
-        env:
-          CHOCOLATEY_NUGET_SOURCE: ${{ secrets.CHOCOLATEY_NUGET_SOURCE }}
-          CHOCOLATEY_NUGET_API_KEY: ${{ secrets.CHOCOLATEY_NUGET_API_KEY }}
-        run: |
-          if (-not $env:CHOCOLATEY_NUGET_SOURCE) {
-            Write-Host "CHOCOLATEY_NUGET_SOURCE not set - skipping private Chocolatey/NuGet push."
-            exit 0
-          }
-          if (-not $env:CHOCOLATEY_NUGET_API_KEY) {
-            Write-Host "CHOCOLATEY_NUGET_API_KEY not set - skipping private Chocolatey/NuGet push."
-            exit 0
-          }
-          $package = Get-ChildItem Output\llmprobe.*.nupkg | Select-Object -First 1
-          if (-not $package) { throw "Chocolatey package was not built" }
-          choco push $package.FullName --source "$env:CHOCOLATEY_NUGET_SOURCE" --api-key "$env:CHOCOLATEY_NUGET_API_KEY" --force
-          if ($LASTEXITCODE -ne 0) { throw "choco push failed" }
 
   homebrew:
     name: Bump Homebrew tap
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: arc-runner-public
     # Skip on prerelease: Homebrew has no prerelease channel (the tap formula is a
     # single "latest" version), so RCs are finals-only here.
     if: needs.release.outputs.is_prerelease != 'true'
