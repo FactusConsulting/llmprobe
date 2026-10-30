@@ -24,9 +24,9 @@ jobs:
       matrix:
         include:
           - target: linux-x64
-            runner: arc-runner
+            runner: arc-runner-public
           - target: linux-arm64
-            runner: arc-runner
+            runner: arc-runner-public
           - target: win-x64
             runner: windows-latest
           # No osx-x64 or osx-arm64. They were cross-compiled here on Linux for
@@ -116,7 +116,7 @@ jobs:
   release:
     name: Release
     needs: build
-    runs-on: arc-runner
+    runs-on: arc-runner-public
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
@@ -267,7 +267,7 @@ jobs:
   homebrew:
     name: Bump Homebrew tap
     needs: release
-    runs-on: arc-runner
+    runs-on: arc-runner-public
     # Skip on prerelease: Homebrew has no prerelease channel (the tap formula is a
     # single "latest" version), so RCs are finals-only here.
     if: needs.release.outputs.is_prerelease != 'true'
